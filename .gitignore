@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Browser profiles and cached user data (IMPORTANT: Do not commit sensitive session data)
+browser_profile/
+temp_image/
+
+# Output data files (keep sample input, ignore crawl results)
+*.csv
+*.db
+*.sqlite
+批量测试结果*
+携程点评*
+黄鹤楼*
+test_output*
+
+# IDE & Editor configs
+.vscode/
+.idea/
+*.swp
