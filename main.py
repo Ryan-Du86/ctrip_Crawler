@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 携程（Ctrip）景点用户点评智能采集工具 - 运行入口
 支持两种运行方式：
@@ -6,10 +5,12 @@
 2. 命令行模式：通过终端运行并传入参数，例如 `uv run main.py "故宫" -p 5`
 """
 
-import sys
 import asyncio
-from ctrip_crawler.crawler import CtripSightCrawler
+import sys
+
 from ctrip_crawler.cli import main as cli_main
+from ctrip_crawler.crawler import CtripSightCrawler
+from ctrip_crawler.logging_setup import setup_logging
 
 # ==============================================================================
 # 🛠️ 编辑器参数配置区 (在 VS Code / PyCharm 中直接修改下方参数，点击运行即可)
@@ -37,7 +38,7 @@ OUTPUT_FILE = "携程点评采集结果.xlsx"
 
 # 导出格式，支持以下选项：
 # - "auto"   : 根据 OUTPUT_FILE 的后缀名自动判断 (.xlsx -> Excel, .csv -> CSV, .db -> SQLite, .json -> JSON)
-# - "excel"  : 导出为 Excel (.xlsx) 表格
+# - "excel"  : 导出为 Excel (.xlsx / .xls) 表格
 # - "csv"    : 导出为 UTF-8 BOM CSV 文件
 # - "sqlite" : 导出为 SQLite 关系型数据库文件 (.db)
 # - "json"   : 导出为 JSON 数组文件 (.json)
@@ -61,16 +62,17 @@ CDP_PORT = 9222
 
 def run_from_editor():
     """在编辑器中直接点击运行时执行的逻辑"""
-    print("[*] 检测到直接在编辑器中运行，正在加载上方代码配置参数...")
+    logger = setup_logging()
+    logger.info("检测到直接在编辑器中运行，正在加载上方代码配置参数...")
 
     if BATCH_FILE:
-        print(f"[*] 启用【批量采集模式】，从文件读取名单: {BATCH_FILE}")
+        logger.info("启用【批量采集模式】，从文件读取名单: %s", BATCH_FILE)
         spots = CtripSightCrawler.load_spots_from_file(BATCH_FILE)
     elif SPOT_TARGET:
-        print(f"[*] 启用【单景点采集模式】，目标: {SPOT_TARGET}")
+        logger.info("启用【单景点采集模式】，目标: %s", SPOT_TARGET)
         spots = [SPOT_TARGET]
     else:
-        print("[!] 未配置采集目标，默认采集: 故宫")
+        logger.info("未配置采集目标，默认采集: 故宫")
         spots = ["故宫"]
 
     crawler = CtripSightCrawler(
