@@ -149,9 +149,15 @@ uv run main.py "故宫"
 # 2) 要求登录：没登录直接报错退出，不做匿名采集
 uv run main.py "故宫" --require-login
 
-# 3) 等待登录：给你 180 秒在浏览器窗口里扫码 / 收验证码登录
+# 3) 等待登录：自动在浏览器里打开携程登录弹窗（扫码 / 验证码 / 密码），
+#    给你 180 秒完成登录
 uv run main.py "故宫" --login-wait 180
 ```
+
+> 💡 `--login-wait` 会**真正点击页面上的「登录」按钮**打开携程官方登录弹窗，
+> 并自动切到「扫码登录」标签页。你只需用携程 App 扫一下二维码。
+> If the current tab is not a Ctrip page, the homepage is opened first so the
+> sign-in button is reachable.
 
 ### 编辑器模式 | Editor mode
 

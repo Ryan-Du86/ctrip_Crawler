@@ -86,6 +86,29 @@ ACCOUNT_MENU_TEXTS = (
     "注册",
 )
 
+# --- Interactive sign-in ---------------------------------------------------
+
+# The header button that opens the sign-in dialog.
+LOGIN_BUTTON_SELECTORS = (
+    '[class*="header_login_title"]',
+    '[class*="header_login_not"]',
+    'button[class*="header_login"]',
+)
+
+# The sign-in dialog wrapper, once it has been opened.
+LOGIN_DIALOG_SELECTORS = (
+    ".lg_loginwrap",
+    ".lg_loginbox",
+)
+
+# Tabs offered inside the sign-in dialog. The QR tab is the default and the
+# easiest to complete, so it is preferred when the dialog opens.
+LOGIN_TAB_SELECTORS = (
+    ("qr", "扫码登录"),
+    ("sms", "验证码登录"),
+    ("password", "账号密码登录"),
+)
+
 
 @dataclass
 class LoginState:
@@ -220,6 +243,88 @@ async def has_logged_out_marker(page: Page) -> bool:
     return False
 
 
+async def open_login_dialog(page: Page) -> bool:
+    """
+    Open Ctrip's sign-in dialog in the browser.
+
+    This actually clicks the "登录" button in the site header, so the user
+    sees the real sign-in panel (QR code / SMS code / password) in their own
+    browser window and can complete it there.
+
+    If the current tab is not on Ctrip at all (a blank tab, another site),
+    the Ctrip homepage is opened first so the header and its sign-in button
+    are available.
+
+    :param page: the page to click on
+    :return: True when the sign-in dialog is visible afterwards
+    """
+    # 1. Make sure we are on a Ctrip page so the header sign-in button exists.
+    if "ctrip.com" not in (page.url or ""):
+        logger.info("Opening the Ctrip homepage to reach the sign-in button...")
+        try:
+            await page.goto(HOME_URL, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(2)
+        except Exception as exc:
+            logger.warning("Could not open the Ctrip homepage: %s", exc)
+            return False
+
+    # 2. Click the header sign-in button.
+    for selector in LOGIN_BUTTON_SELECTORS:
+        try:
+            btn = page.locator(selector).first
+            if not await btn.count():
+                continue
+            await btn.scroll_into_view_if_needed()
+            await btn.click()
+            await asyncio.sleep(1.5)
+            break
+        except Exception as exc:
+            logger.debug("Could not click the sign-in button (%s): %s", selector, exc)
+
+    # 3. Confirm the dialog actually opened.
+    for _ in range(10):
+        if await _login_dialog_visible(page):
+            return True
+        await asyncio.sleep(0.5)
+    return False
+
+
+async def _login_dialog_visible(page: Page) -> bool:
+    """Check whether the sign-in dialog is present in the DOM."""
+    for selector in LOGIN_DIALOG_SELECTORS:
+        try:
+            if await page.locator(selector).count():
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def select_qr_login_tab(page: Page) -> bool:
+    """
+    Switch the sign-in dialog to the QR code tab.
+
+    The QR code is the simplest option to complete — the user just scans it
+    with the Ctrip app.
+
+    :param page: the page holding the dialog
+    :return: True when the QR tab was selected
+    """
+    for key, label in LOGIN_TAB_SELECTORS:
+        if key != "qr":
+            continue
+        try:
+            tab = page.locator(f"text={label}").first
+            if await tab.count():
+                await tab.click()
+                await asyncio.sleep(0.8)
+                logger.info("Switched the sign-in dialog to the QR code tab.")
+                return True
+        except Exception as exc:
+            logger.debug("Could not select the %s tab: %s", label, exc)
+    return False
+
+
 async def wait_for_login(
     page: Page,
     timeout: int = 300,
@@ -228,9 +333,9 @@ async def wait_for_login(
     """
     Wait for the user to sign in, polling the session until it turns active.
 
-    The browser window stays in front, so the user can complete the sign-in
-    (including any QR code or SMS step) in their own browser while this
-    coroutine polls.
+    On the first attempt this opens Ctrip's real sign-in dialog in the
+    browser (QR code / SMS code / password tabs), so the user can complete it
+    in their own browser window while this coroutine polls.
 
     :param page: the page used to poll the session
     :param timeout: maximum number of seconds to wait
@@ -259,10 +364,23 @@ async def wait_for_login(
 
         if attempt == 1:
             logger.info(
-                "Waiting up to %ds for you to sign in to Ctrip in the browser window "
-                "(complete any QR code or SMS step there).",
+                "Waiting up to %ds for you to sign in to Ctrip in the browser window.",
                 timeout,
             )
+            # Open the real sign-in dialog so the user has something to act on.
+            if await open_login_dialog(page):
+                logger.info(
+                    "The Ctrip sign-in dialog is now open in the browser. "
+                    "Scan the QR code (or use the SMS code / password tab), "
+                    "then come back here."
+                )
+                await select_qr_login_tab(page)
+            else:
+                logger.warning(
+                    "Could not open the sign-in dialog automatically. "
+                    "Sign in manually in the browser window."
+                )
+
         logger.info(
             "Still not signed in. Retrying in %s (%d/%d)...",
             f"{poll_interval:g}s",
