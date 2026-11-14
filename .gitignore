@@ -9,9 +9,10 @@ wheels/
 # Virtual environments
 .venv/
 
-# Browser profiles and cached user data (IMPORTANT: Do not commit sensitive session data)
-browser_profile/
-temp_image/
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
 
 # Crawl results (see output/)
 output/

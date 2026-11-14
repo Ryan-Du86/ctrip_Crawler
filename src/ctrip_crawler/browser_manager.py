@@ -6,6 +6,7 @@ import logging
 import os
 import socket
 import subprocess
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -74,8 +75,8 @@ def default_user_data_dir(browser_path: str) -> str:
 
     if profile:
         return profile
-    # 极端情况兜底：使用仓库内的 browser_profile
-    return str(Path(__file__).resolve().parents[2] / "browser_profile")
+    # 极端情况兜底：系统变量缺失时退回临时目录下的独立 profile
+    return os.path.join(tempfile.gettempdir(), "ctrip_crawler_cdp_profile")
 
 
 def candidate_ports(port: int) -> list[int]:
