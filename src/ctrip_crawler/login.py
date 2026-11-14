@@ -361,7 +361,7 @@ async def wait_for_login(
     :param poll_interval: seconds between polls
     :return: the final login state
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     attempt = 0
 

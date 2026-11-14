@@ -4,9 +4,11 @@
 
 import json
 import logging
+import math
 import os
 import sqlite3
 
+import numpy as np
 import pandas as pd
 
 from .paths import resolve_output_path
@@ -15,6 +17,16 @@ logger = logging.getLogger(__name__)
 
 # 表格首列序号
 INDEX_COLUMN = "序号"
+
+# 输出文件后缀 -> 导出格式（auto 模式的推断依据，全模块统一使用这一份）
+EXT_FORMAT_MAP = {
+    ".csv": "csv",
+    ".xlsx": "excel",
+    ".xls": "excel",
+    ".db": "sqlite",
+    ".sqlite": "sqlite",
+    ".json": "json",
+}
 
 
 class DataExporter:
@@ -57,58 +69,34 @@ class DataExporter:
         ext = ext.lower()
         format_lower = format_type.lower()
 
-        # 自动推断格式
+        # 自动推断格式（非 all 的各格式统一写到 base_name + 对应后缀）
         if format_lower == "auto":
-            ext_map = {
-                ".csv": "csv",
-                ".xlsx": "excel",
-                ".xls": "excel",
-                ".db": "sqlite",
-                ".sqlite": "sqlite",
-                ".json": "json",
-            }
-            format_lower = ext_map.get(ext, "csv")
+            format_lower = EXT_FORMAT_MAP.get(ext, "csv")
 
         exported_files: list[str] = []
 
         # 1. CSV
         if format_lower in ("csv", "all"):
-            csv_path = (
-                base_name + ".csv"
-                if format_lower == "all"
-                else (output_path if ext == ".csv" else base_name + ".csv")
-            )
+            csv_path = base_name + ".csv"
             df.to_csv(csv_path, index=False, encoding="utf-8-sig")
             exported_files.append(csv_path)
 
         # 2. Excel（.xlsx 用 openpyxl；.xls 由 xlwt 直写，pandas 3 已移除该引擎）
         if format_lower in ("excel", "all"):
-            if format_lower == "all":
-                excel_path = base_name + ".xlsx"
-            elif ext in (".xlsx", ".xls"):
-                excel_path = output_path
-            else:
-                excel_path = base_name + ".xlsx"
+            suffix = ".xlsx" if format_lower == "all" else (ext if ext in (".xlsx", ".xls") else ".xlsx")
+            excel_path = base_name + suffix
             DataExporter._write_excel(df, excel_path)
             exported_files.append(excel_path)
 
         # 3. SQLite
         if format_lower in ("sqlite", "all"):
-            sqlite_path = (
-                base_name + ".db"
-                if format_lower == "all"
-                else (output_path if ext in (".db", ".sqlite") else base_name + ".db")
-            )
+            sqlite_path = base_name + ".db"
             DataExporter._write_sqlite(df, sqlite_path, table_name, overwrite=overwrite)
             exported_files.append(sqlite_path)
 
         # 4. JSON
         if format_lower in ("json", "all"):
-            json_path = (
-                base_name + ".json"
-                if format_lower == "all"
-                else (output_path if ext == ".json" else base_name + ".json")
-            )
+            json_path = base_name + ".json"
             # 转为标准 utf-8 字典列表
             data_dict = df.to_dict(orient="records")
             with open(json_path, "w", encoding="utf-8") as f:
@@ -153,12 +141,12 @@ class DataExporter:
         # 数据行
         for row_idx, row in enumerate(df.itertuples(index=False, name=None), start=1):
             for col_idx, value in enumerate(row):
-                if value is None:
+                if value is None or (isinstance(value, float) and math.isnan(value)):
                     continue
                 if isinstance(value, bool):
                     sheet.write(row_idx, col_idx, "TRUE" if value else "FALSE")
-                elif isinstance(value, (int, float)):
-                    sheet.write(row_idx, col_idx, value)
+                elif isinstance(value, (int, float, np.integer, np.floating)):
+                    sheet.write(row_idx, col_idx, value.item() if hasattr(value, "item") else value)
                 else:
                     # 控制 Excel 单元格最大长度 32767
                     text = str(value)
@@ -224,24 +212,3 @@ def _read_table_columns(conn: sqlite3.Connection, table_name: str) -> list[str]:
         return [row[1] for row in cursor.fetchall()]
     except sqlite3.Error:
         return []
-
-
-def detect_format(output_path: str, format_type: str = "auto") -> str:
-    """
-    根据输出路径与用户指定的格式推导出最终格式名。
-
-    :param output_path: 输出文件路径
-    :param format_type: auto | csv | excel | sqlite | json | all
-    :return: csv | excel | sqlite | json | all
-    """
-    if format_type.lower() != "auto":
-        return format_type.lower()
-    ext = os.path.splitext(output_path)[1].lower()
-    return {
-        ".csv": "csv",
-        ".xlsx": "excel",
-        ".xls": "excel",
-        ".db": "sqlite",
-        ".sqlite": "sqlite",
-        ".json": "json",
-    }.get(ext, "csv")

@@ -71,7 +71,7 @@ class CtripSightCrawler:
         self.require_login = require_login
         self.login_wait = login_wait
         self.records: list[dict] = []
-        self.seen_keys: set = set()
+        self.seen_keys: set[str] = set()
         self.login_state: LoginState | None = None
         self._browser_proc: subprocess.Popen | None = None
 
@@ -227,24 +227,19 @@ class CtripSightCrawler:
     # 点评抽取
     # ------------------------------------------------------------------
     async def _extract_page_comments(self, page: Page, spot_name: str) -> int:
-        """从当前页点评卡片中提取数据"""
-        items = await page.locator(S.COMMENT_ITEM).all()
+        """从当前页点评卡片中提取数据（单次 evaluate 批量抽取，减少 CDP 往返）"""
+        rows = await self._read_page_rows(page)
         new_count = 0
 
-        for item in items:
-            # 1. 评论正文
-            detail_loc = item.locator(S.COMMENT_DETAIL)
-            if not await detail_loc.count():
-                continue
-            content = (await detail_loc.inner_text()).strip().replace("\r", " ").replace("\n", " ")
+        for row in rows:
+            content = (
+                (row.get("content") or "").replace("\r", " ").replace("\n", " ").strip()
+            )
             if not content:
                 continue
 
-            # 2. 用户名
-            user_name = await _extract_text(item, (S.USER_NAME,)) or "匿名用户"
-
-            # 3. 时间与 IP 属地
-            time_raw = await _extract_text(item, (S.COMMENT_TIME,))
+            user_name = row.get("username") or "匿名用户"
+            time_raw = row.get("time") or ""
             publish_time, ip_location = "", ""
             if time_raw:
                 date_match = re.search(r"\d{4}-\d{2}-\d{2}", time_raw)
@@ -253,9 +248,7 @@ class CtripSightCrawler:
                 ip_match = re.search(r"IP属地[：:]\s*([^\s]+)", time_raw)
                 if ip_match:
                     ip_location = ip_match.group(1)
-
-            # 4. 评分（携程的类名是 "scroreInfo"，同时兼容 scoreInfo）
-            score = await _extract_text(item, (S.SCORE, S.SCORE_FALLBACK))
+            score = row.get("score") or ""
 
             # 去重：对全文做哈希，避免前 25 字相同的两条点评被误判为重复
             digest = hashlib.md5(content.encode("utf-8")).hexdigest()
@@ -288,6 +281,20 @@ class CtripSightCrawler:
             )
 
         return new_count
+
+    @staticmethod
+    async def _read_page_rows(page: Page) -> list[dict]:
+        """
+        读取当前页全部点评卡片字段，返回 [{content, username, time, score}, ...]。
+
+        首选一次 evaluate 批量抽取（整页一次往返）；
+        脚本失败时退回逐条 locator 模式，保证兼容性。
+        """
+        try:
+            return await page.evaluate(_BATCH_EXTRACT_JS, _dom_selector_args())
+        except Exception as exc:
+            logger.debug("Batch DOM extraction failed (%s); falling back to locator mode.", exc)
+            return await _extract_rows_via_locators(page)
 
     async def _goto_with_retry(self, page: Page, url: str) -> bool:
         """带重试的页面导航，失败时返回 False。"""
@@ -421,12 +428,16 @@ class CtripSightCrawler:
         async with async_playwright() as p:
             browser = None
             page: Page | None = None
+            connected = False
 
             try:
                 if self.use_cdp:
-                    endpoint, proc = ensure_cdp_browser(
-                        port=self.cdp_port,
-                        headless=self.headless,
+                    # 拉起浏览器的同步轮询最长可达 10s，放到线程池避免阻塞事件循环
+                    endpoint, proc = await asyncio.to_thread(
+                        ensure_cdp_browser,
+                        self.cdp_port,
+                        None,
+                        self.headless,
                     )
                     self._browser_proc = proc
                     self._print_cdp_banner("CONNECTING", endpoint)
@@ -447,6 +458,7 @@ class CtripSightCrawler:
                     else:
                         page = await context.new_page()
                     self._print_cdp_banner("CONNECTED", endpoint, detail=page.url or "blank page")
+                    connected = True
                 else:
                     logger.info("Run mode: native automation driver (headless=%s)", self.headless)
                     for channel in ["msedge", "chrome", None]:
@@ -494,7 +506,8 @@ class CtripSightCrawler:
                     if browser:
                         await browser.close()
                 else:
-                    self._print_cdp_banner("DISCONNECTED", detail="browser left open")
+                    if connected:
+                        self._print_cdp_banner("DISCONNECTED", detail="browser left open")
                     self._cleanup_browser_process()
 
         # 导出结果
@@ -574,6 +587,62 @@ async def _extract_text(scope, selectors: tuple[str, ...]) -> str:
         except Exception:
             continue
     return ""
+
+
+async def _extract_rows_via_locators(page: Page) -> list[dict]:
+    """逐条 locator 抽取整页点评字段（批量 evaluate 失败时的兜底方案）。"""
+    items = await page.locator(S.COMMENT_ITEM).all()
+    rows: list[dict] = []
+    for item in items:
+        content = await _extract_text(item, (S.COMMENT_DETAIL,))
+        if not content:
+            continue
+        rows.append(
+            {
+                "content": content,
+                "username": await _extract_text(item, (S.USER_NAME,)),
+                "time": await _extract_text(item, (S.COMMENT_TIME,)),
+                "score": await _extract_text(item, (S.SCORE, S.SCORE_FALLBACK)),
+            }
+        )
+    return rows
+
+
+# 整页点评字段的一次性批量抽取脚本：每个字段同样按候选选择器顺序兜底。
+_BATCH_EXTRACT_JS = """
+(args) => {
+  const pickText = (root, selectors) => {
+    for (const sel of selectors) {
+      const el = root.querySelector(sel);
+      if (el) {
+        const t = (el.innerText || el.textContent || '').trim();
+        if (t) return t;
+      }
+    }
+    return '';
+  };
+  return Array.from(document.querySelectorAll(args.itemSelector)).map((item) => {
+    const row = {};
+    for (const [key, selectors] of Object.entries(args.fields)) {
+      row[key] = pickText(item, selectors);
+    }
+    return row;
+  });
+}
+"""
+
+
+def _dom_selector_args() -> dict:
+    """构造批量抽取脚本的选择器入参（与 selectors.py 保持同源）。"""
+    return {
+        "itemSelector": S.COMMENT_ITEM,
+        "fields": {
+            "content": [S.COMMENT_DETAIL],
+            "username": [S.USER_NAME],
+            "time": [S.COMMENT_TIME],
+            "score": [S.SCORE, S.SCORE_FALLBACK],
+        },
+    }
 
 
 def _pick_best_sight(candidates: list[dict], query: str) -> dict:
