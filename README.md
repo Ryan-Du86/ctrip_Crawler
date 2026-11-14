@@ -39,18 +39,18 @@
 # ==============================================================================
 
 # 【1. 采集目标配置】
-SPOT_TARGET = "故宫"           # 支持景点名、目的地或完整 URL
+SPOT_TARGET = "故宫"  # 支持景点名、目的地或完整 URL
 
 # 【2. 采集深度配置】
-MAX_PAGES = 3                 # 每个景点的最大翻页采集数量（每页 10 条）
+MAX_PAGES = 3  # 每个景点的最大翻页采集数量（每页 10 条）
 
 # 【3. 数据导出配置】
 OUTPUT_FILE = "携程点评采集结果.xlsx"
-EXPORT_FORMAT = "auto"        # "auto" | "excel" | "csv" | "sqlite" | "json" | "all"
+EXPORT_FORMAT = "auto"  # "auto" | "excel" | "csv" | "sqlite" | "json" | "all"
 
 # 【4. 浏览器与反爬配置】
-USE_CDP = True                # 默认开启 CDP 接管
-HEADLESS = False              # 接管外部浏览器时设为 False 可看实时翻页
+USE_CDP = True  # 默认开启 CDP 接管
+HEADLESS = False  # 接管外部浏览器时设为 False 可看实时翻页
 CDP_PORT = 9222
 # ==============================================================================
 ```
@@ -103,6 +103,55 @@ uv run main.py "九寨沟" --pages 2 --format all -o 九寨沟全数据
 | `--no-cdp`| - | `False` | 禁用 CDP 模式（默认开启） |
 | `--cdp-port`| - | `9222` | CDP 调试端口（若被占用会自动顺延选择空闲端口） |
 | `--no-headless`| -| `False` | 显示真实浏览器界面窗口（默认后台无头运行） |
+| `--log-file`| - | `None` | 将运行日志同时写入指定文件 |
+| `--verbose`| `-v` | `False` | 输出 DEBUG 级别详细日志 |
+
+> **编码提示**：程序启动时会自动把控制台输出切换到 UTF-8，因此在 cmd、PowerShell、
+> git-bash 等各种终端下打印中文都不会再出现 `UnicodeEncodeError`。
+
+---
+
+## 🧪 开发与测试
+
+```bash
+# 安装开发依赖（pytest / ruff / mypy）
+uv sync --group dev
+
+# 运行测试
+uv run pytest -q
+
+# 代码检查与格式化
+uv run ruff check .
+uv run ruff format .
+
+# 类型检查
+uv run mypy
+```
+
+---
+
+## 🛠️ 代码结构说明
+
+```
+src/ctrip_crawler/
+├── crawler.py         # 采集主引擎：搜索解析、点评抽取、翻页逻辑
+├── selectors.py       # 所有页面 CSS 选择器集中管理（携程改版只改这里）
+├── exporter.py        # 多格式导出：CSV / Excel(.xlsx/.xls) / SQLite / JSON
+├── browser_manager.py # CDP 端口探测与浏览器自动拉起
+├── logging_setup.py   # 日志配置 + 控制台 UTF-8 编码修复
+└── cli.py             # 命令行参数解析
+```
+
+**几个容易踩坑的点，已经处理好了：**
+
+- **`.xls` 读写**：pandas 3.x 移除了 xlwt 写入引擎、xlrd 2.x 也已不支持写 `.xls`，
+  项目内已用 xlwt 直写补齐，并用 calamine 读取 `.xls`。
+- **SQLite 重复行**：默认按内容去重后追加，重复运行同一条命令不会产生重复记录
+  （需要强制覆盖请调用 `DataExporter.export(..., overwrite=True)`）。
+- **空表格**：读入空 sheet 会给出清晰的错误提示，而不是抛出裸 `IndexError`。
+- **浏览器 profile**：自动拉起浏览器时复用 `%LOCALAPPDATA%` 下你日常已登录携程的
+  profile，不会因为用了全新空 profile 而撞上登录墙。
+- **去重**：点评按全文哈希去重，不会因为前 25 个字相同而误删不同的点评。
 
 ---
 

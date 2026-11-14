@@ -17,10 +17,16 @@ temp_image/
 *.csv
 *.db
 *.sqlite
+*.xlsx
+!景点名单_示例.xlsx
 批量测试结果*
 携程点评*
 黄鹤楼*
+*_ctripcomment*
+*点评*
 test_output*
+*.log
+logs/
 
 # IDE & Editor configs
 .vscode/
