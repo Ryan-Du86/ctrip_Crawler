@@ -62,7 +62,7 @@ def default_user_data_dir(browser_path: str) -> str:
 
     关键点：必须复用用户日常使用、已经登录携程的那个 profile，
     否则自动拉起的浏览器是全新的未登录实例，会直接撞上登录墙。
-    与项目根目录的「启动带调试端口的Chrome.bat / Edge.bat」保持一致。
+    与 README 中说明的手动启动参数保持一致。
     """
     browser_name = Path(browser_path).stem.lower()
     local_appdata = os.environ.get("LOCALAPPDATA", "")

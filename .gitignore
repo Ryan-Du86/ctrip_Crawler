@@ -13,18 +13,15 @@ wheels/
 browser_profile/
 temp_image/
 
-# Output data files (keep sample input, ignore crawl results)
+# Crawl results (see output/)
+output/
+
+# Stray data files outside output/
 *.csv
 *.db
 *.sqlite
 *.xlsx
-!景点名单_示例.xlsx
-批量测试结果*
-携程点评*
-黄鹤楼*
-*_ctripcomment*
-*点评*
-test_output*
+!examples/*.xlsx
 *.log
 logs/
 

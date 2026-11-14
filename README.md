@@ -1,73 +1,163 @@
-# Ctrip Smart Review Crawler (携程景点点评智能采集工具)
+# Ctrip Smart Review Crawler | 携程景点点评智能采集工具
 
-专为携程景点用户真实点评采集打造的现代化爬虫工具，基于 **Python + CDP / Playwright**，使用 **`uv`** 进行环境与依赖管理。
-
-支持两种使用习惯：
-1. **编辑器可视化调参**：在 VS Code / PyCharm 等编辑器中直接修改变量，点击右上角【运行】按钮即可。
-2. **终端命令行驱动**：在终端通过 `uv run main.py ...` 传递各种参数。
+> 基于 **Python + CDP / Playwright** 的携程景点用户真实点评采集工具，使用 **`uv`** 管理依赖。
+> A modern crawler for Ctrip (携程) attraction reviews, built on **Python + CDP / Playwright**.
 
 ---
 
-## 🛡️ CDP 模式核心优势：直接接管当前已打开的浏览器（不重开、不关闭）
+## 📖 目录 | Table of Contents
 
-这是防风控效果最好的模式：**直接调用你当前已经在看的浏览器界面**，无需重新开新浏览器，爬取完成后也**绝不会关闭你的浏览器**！
-
-### 如何使用：
-1. **启动浏览器（只需启动一次）**：
-   双击项目目录下的脚本启动你的日常浏览器：
-   - 使用 Chrome：双击运行 [启动带调试端口的Chrome.bat](file:///D:/worksations/ctrip_Crawler/启动带调试端口的Chrome.bat)
-   - 使用 Edge：双击运行 [启动带调试端口的Edge.bat](file:///D:/worksations/ctrip_Crawler/启动带调试端口的Edge.bat)
-   *(或者给桌面的 Chrome/Edge 快捷方式属性目标加上 `--remote-debugging-port=9222`，以后平时上网都用它即可)*
-
-2. **在浏览器中随意浏览 / 登录携程**：
-   在打开的窗口里，你可以登录携程、搜索景点，或者直接停留在某个景点的点评页面上。
-
-3. **运行爬虫**：
-   - 爬虫启动后会**直接识别并接管你当前屏幕上的那个标签页**；
-   - 如果你当前正停留在黄鹤楼页面，爬虫连搜索都免了，直接在当前页面开始向下滚动翻页；
-   - 采集完成导出 Excel 后，**当前浏览器窗口依然保留**，方便你随时在界面上核对数据！
+- [项目结构 | Project Layout](#-项目结构--project-layout)
+- [快速开始 | Quick Start](#-快速开始--quick-start)
+- [🛡️ CDP 模式 | CDP Mode](#-cdp-模式--cdp-mode)
+- [💻 方式一：编辑器调参 | Editor Mode](#-方式一编辑器调参--editor-mode)
+- [⚡ 方式二：命令行 | CLI Mode](#-方式二命令行--cli-mode)
+- [📋 参数速查表 | CLI Reference](#-参数速查表--cli-reference)
+- [🗄️ 输出数据字段 | Output Schema](#-输出数据字段--output-schema)
+- [🛠️ 代码结构 | Code Structure](#-代码结构--code-structure)
+- [🧪 开发 | Development](#-开发--development)
 
 ---
 
-## 💻 方式一：在编辑器中调参并直接运行（最简单）
+## 📂 项目结构 | Project Layout
 
-无需在终端输入任何长命令，直接打开项目根目录下的 **[`main.py`](file:///D:/worksations/ctrip_Crawler/main.py)**，在最上方的 **【🛠️ 编辑器参数配置区】** 修改变量即可：
+```
+ctrip_Crawler/
+├── README.md                  # 本文档 / This document
+├── pyproject.toml             # 项目与依赖配置 / Project & dependency config
+├── uv.lock                    # 依赖锁定 / Locked dependencies
+├── main.py                    # 入口：编辑器调参 + CLI 分发 / Entry point
+├── src/ctrip_crawler/        # 主包 / Main package
+│   ├── crawler.py             # 采集主引擎 / Core crawler
+│   ├── selectors.py           # CSS 选择器集中管理 / Centralized selectors
+│   ├── exporter.py            # 多格式导出 / Multi-format export
+│   ├── browser_manager.py     # CDP 探测与浏览器拉起 / CDP detection & launch
+│   ├── logging_setup.py       # 日志与编码修复 / Logging & encoding
+│   ├── paths.py               # 路径常量 / Path constants
+│   ├── cli.py                 # 命令行解析 / CLI parsing
+│   ├── __main__.py            # python -m 入口 / Module entry point
+│   └── __init__.py
+├── examples/
+│   └── 景点名单_示例.xlsx      # 批量名单模板 / Batch spot list template
+└── output/                    # 采集结果（已 gitignore）/ Crawl results (gitignored)
+```
+
+> **目录约定 | Directory convention**
+> 采集结果统一落在 `output/`，相对路径即相对于该目录；
+> Crawl results always land in `output/` — relative paths are resolved against it.
+
+---
+
+## 🚀 快速开始 | Quick Start
+
+```bash
+# 安装依赖 / Install dependencies
+uv sync
+
+# 单景点采集 / Crawl a single attraction
+uv run main.py "故宫" --pages 3
+
+# 也可以用包入口 / Or use the module entry point
+uv run python -m ctrip_crawler "故宫" --pages 3
+
+# 批量采集 / Batch crawl from a spreadsheet
+uv run main.py --batch examples/景点名单_示例.xlsx --pages 2
+
+# 一键导出全部 4 种格式 / Export all four formats at once
+uv run main.py "九寨沟" --format all -o 九寨沟全数据
+```
+
+---
+
+## 🛡️ CDP 模式 | CDP Mode
+
+**核心思路**：直接接管你当前已经打开的浏览器，不新开窗口，采集完也不关闭。
+**Core idea**: take over the browser you already have open — no new window, never closed at the end.
+
+这是防风控效果最好的模式。
+This is the mode with the strongest anti-ban behaviour.
+
+### 步骤 | Steps
+
+**1. 用调试端口启动浏览器（只需启动一次）**
+**Start your browser with the debugging port (only once)**
+
+在浏览器快捷方式的「目标」末尾加上 `--remote-debugging-port=9222`，例如：
+
+```
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome_CDP_Profile"
+```
+
+Edge 对应参数：
+
+```
+"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Microsoft\Edge_CDP_Profile"
+```
+
+> ⚠️ **务必指定 `--user-data-dir`**
+> 不指定的话浏览器会拒绝在默认 profile 上开启调试端口；
+> 而复用带 CDP 的独立 profile，爬虫才能沿用你已登录携程的会话。
+>
+> **Always pass `--user-data-dir`** — Chrome refuses the debug port on the default profile,
+> and a dedicated CDP profile keeps your existing Ctrip login session.
+
+> 💡 端口被占用时，爬虫会自动顺延到 `9333 / 9444 / 9555 / 9666`。
+> If the port is busy, the crawler automatically falls back to `9333 / 9444 / 9555 / 9666`.
+
+**2. 在浏览器里自由浏览、登录携程**
+**Browse and log in to Ctrip freely**
+
+可以登录携程、搜索景点，或者直接停留在某个景点的点评页面上。
+Log in, search, or just leave a tab open on the attraction's review page.
+
+**3. 运行爬虫**
+**Run the crawler**
+
+- 爬虫会**直接识别并接管你当前屏幕上的那个标签页**；
+  The crawler **detects and takes over your currently active tab**.
+- 若你正停留在黄鹤楼页面，搜索都免了，直接在当前页面开始翻页；
+  If you are already on the target page, the search step is skipped entirely.
+- 采集完成导出后，**浏览器窗口依然保留**，方便随时核对数据；
+  After the export, **your browser stays open** so you can spot-check the results.
+
+---
+
+## 💻 方式一：编辑器调参 | Editor Mode
+
+打开项目根目录下的 [`main.py`](main.py)，在最上方的 **【🛠️ 编辑器参数配置区】** 修改变量即可。
+
+Open [`main.py`](main.py) and edit the variables in the **【🛠️ 编辑器参数配置区】** block.
 
 ```python
-# ==============================================================================
-# 🛠️ 编辑器参数配置区 (在 VS Code / PyCharm 中直接修改下方参数，点击运行即可)
-# ==============================================================================
+# 【1. 采集目标配置】Target
+SPOT_TARGET = "故宫"  # 景点名 / 目的地 / 完整 URL
 
-# 【1. 采集目标配置】
-SPOT_TARGET = "故宫"  # 支持景点名、目的地或完整 URL
+# 【2. 采集深度配置】Depth
+MAX_PAGES = 3  # 每个景点翻页数，每页 10 条
 
-# 【2. 采集深度配置】
-MAX_PAGES = 3  # 每个景点的最大翻页采集数量（每页 10 条）
+# 【3. 数据导出配置】Export
+OUTPUT_FILE = "携程点评采集结果.xlsx"  # -> output/携程点评采集结果.xlsx
+EXPORT_FORMAT = "auto"  # auto | excel | csv | sqlite | json | all
 
-# 【3. 数据导出配置】
-OUTPUT_FILE = "携程点评采集结果.xlsx"
-EXPORT_FORMAT = "auto"  # "auto" | "excel" | "csv" | "sqlite" | "json" | "all"
-
-# 【4. 浏览器与反爬配置】
+# 【4. 浏览器与反爬配置】Browser
 USE_CDP = True  # 默认开启 CDP 接管
 HEADLESS = False  # 接管外部浏览器时设为 False 可看实时翻页
 CDP_PORT = 9222
-# ==============================================================================
 ```
 
-> **运行方法**：修改完上述变量保存后，在 VS Code / PyCharm 中直接点击右上角的绿色三角 **【运行 / Run】** 按钮即可！
+> 保存后，在 VS Code / PyCharm 中点击右上角绿色三角 **【运行 / Run】** 即可。
+> Save, then hit the green **Run** triangle in VS Code / PyCharm.
 
 ---
 
-## ⚡ 方式二：终端命令行驱动（通过 `uv run`）
-
-如果您习惯使用终端或者部署在自动化脚本中：
+## ⚡ 方式二：命令行 | CLI Mode
 
 ```powershell
 cd D:\worksations\ctrip_Crawler
 ```
 
-### 1. 单个景点智能采集（输入名称即可）
+### 1. 单个景点智能采集 | Single attraction
+
 ```powershell
 # 采集黄鹤楼 20 页（200 条），导出为 Excel
 uv run main.py "黄鹤楼" --pages 20 -o 黄鹤楼200条.xlsx
@@ -76,98 +166,118 @@ uv run main.py "黄鹤楼" --pages 20 -o 黄鹤楼200条.xlsx
 uv run main.py "东湖绿道" --pages 5 -o 东湖点评.db
 ```
 
-### 2. 从 Excel 表格批量导入批量爬取
-项目目录下已附带模板：[景点名单_示例.xlsx](file:///D:/worksations/ctrip_Crawler/%E6%99%AF%E7%82%B9%E5%90%8D%E5%8D%95_%E7%A4%BA%E4%BE%8B.xlsx)
+### 2. 从表格批量导入 | Batch crawl from spreadsheet
+
+模板见 [`examples/景点名单_示例.xlsx`](examples/景点名单_示例.xlsx)，只要含一列景点名称即可自动识别。
+
 ```powershell
-# 批量采集 Excel 中的全部景点，每景抓 2 页
-uv run main.py --batch 景点名单_示例.xlsx --pages 2 -o 批量结果.xlsx
+uv run main.py --batch examples/景点名单_示例.xlsx --pages 2 -o 批量结果.xlsx
 ```
 
-### 3. 一键同步导出所有 4 种数据格式 (Excel + SQLite + CSV + JSON)
+### 3. 一次导出全部格式 | Export every format
+
 ```powershell
 uv run main.py "九寨沟" --pages 2 --format all -o 九寨沟全数据
 ```
 
 ---
 
-## 📋 命令行参数速查表
+## 📋 参数速查表 | CLI Reference
 
-| 参数 | 简写 | 默认值 | 作用说明 |
-| :--- | :--- | :--- | :--- |
-| `spot_arg` | - | `故宫` | 景点名称、目的地或直接 URL (位置参数) |
-| `--spot` | `-s` | `None` | 待采集的景点名称/URL (选项参数) |
-| `--batch` | `-b` | `None` | 批量导入文件路径，支持 `.xlsx`, `.xls`, `.csv` |
-| `--pages` | `-p` | `3` | 每个景点的翻页采集数量（每页 10 条） |
-| `--format`| `-f` | `auto` | 导出格式：`auto` (由后缀决定) \| `excel` \| `sqlite` \| `csv` \| `json` \| `all` |
-| `--output`| `-o` | `携程点评采集结果.xlsx`| 输出文件名或基础路径 |
-| `--no-cdp`| - | `False` | 禁用 CDP 模式（默认开启） |
-| `--cdp-port`| - | `9222` | CDP 调试端口（若被占用会自动顺延选择空闲端口） |
-| `--no-headless`| -| `False` | 显示真实浏览器界面窗口（默认后台无头运行） |
-| `--log-file`| - | `None` | 将运行日志同时写入指定文件 |
-| `--verbose`| `-v` | `False` | 输出 DEBUG 级别详细日志 |
+| 参数 | 简写 | 默认值 | 说明 | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `spot_arg` | - | `故宫` | 景点名称/URL（位置参数） | Attraction name or URL (positional) |
+| `--spot` | `-s` | `None` | 景点名称/URL（选项参数） | Attraction name or URL (option) |
+| `--batch` | `-b` | `None` | 批量名单文件 | Batch list file (`.xlsx`/`.xls`/`.csv`) |
+| `--pages` | `-p` | `3` | 每景点翻页数（每页 10 条） | Pages per attraction (10 per page) |
+| `--format` | `-f` | `auto` | 导出格式 | Export format: `auto`\|`excel`\|`sqlite`\|`csv`\|`json`\|`all` |
+| `--output` | `-o` | `携程点评采集结果.xlsx` | 输出文件（相对路径落 `output/`） | Output file (relative paths go to `output/`) |
+| `--no-cdp` | - | `False` | 禁用 CDP 模式 | Disable CDP mode |
+| `--cdp-port` | - | `9222` | CDP 调试端口 | CDP debugging port |
+| `--no-headless` | - | `False` | 显示浏览器窗口 | Show the browser window |
+| `--log-file` | - | `None` | 同时写入日志文件 | Also write logs to a file |
+| `--verbose` | `-v` | `False` | DEBUG 级日志 | DEBUG-level logging |
 
-> **编码提示**：程序启动时会自动把控制台输出切换到 UTF-8，因此在 cmd、PowerShell、
-> git-bash 等各种终端下打印中文都不会再出现 `UnicodeEncodeError`。
+> **编码提示 | Encoding note**
+> 程序启动时会把控制台输出切到 UTF-8，因此在 cmd、PowerShell、git-bash 下打印中文都不会再报 `UnicodeEncodeError`。
+> The console is switched to UTF-8 at startup, so Chinese output no longer raises `UnicodeEncodeError` on any terminal.
 
 ---
 
-## 🧪 开发与测试
+## 🗄️ 输出数据字段 | Output Schema
+
+导出为 CSV、Excel、SQLite 还是 JSON，均包含以下统一字段：
+All four formats share the same schema:
+
+| 字段名称 | Field | 类型 | 示例 | Example |
+| :--- | :--- | :--- | :--- | :--- |
+| **序号** | index | 整数 | `1` | `1` |
+| **景区名称** | attraction | 字符串 | `故宫博物院, 北京` | `故宫博物院, 北京` |
+| **平台** | platform | 字符串 | `携程` | `携程` |
+| **内容类型** | content_type | 字符串 | `用户点评` | `用户点评` |
+| **时间** | date | 字符串 | `2026-10-20` | `2026-10-20` |
+| **文本内容** | content | 文本 | `感谢纪导全程精彩的讲解…` | `感谢纪导全程精彩的讲解…` |
+| **字数** | length | 整数 | `100` | `100` |
+| **评分** | rating | 字符串 | `5分 超棒` | `5分 超棒` |
+| **IP属地** | ip_location | 字符串 | `北京` | `北京` |
+| **用户名** | username | 字符串 | `匿名用户` | `匿名用户` |
+
+---
+
+## 🛠️ 代码结构 | Code Structure
+
+| 模块 | Module | 职责 | Responsibility |
+| :--- | :--- | :--- | :--- |
+| `crawler.py` | | 搜索解析、点评抽取、翻页 | Search resolution, review extraction, pagination |
+| `selectors.py` | | 全部 CSS 选择器集中管理 | All CSS selectors in one place |
+| `exporter.py` | | CSV / Excel / SQLite / JSON 导出 | Multi-format export |
+| `browser_manager.py` | | CDP 端口探测与浏览器拉起 | CDP detection & browser launch |
+| `logging_setup.py` | | 日志配置 + 控制台编码修复 | Logging & console encoding fix |
+| `paths.py` | | 路径常量 | Path constants |
+| `cli.py` | | 命令行参数解析 | CLI parsing |
+
+> 💡 **携程改版时只改 `selectors.py`** —— 页面类名集中在这里，不必满项目排查。
+> When Ctrip redesigns the page, **only `selectors.py` needs editing**.
+
+**几个容易踩坑的点，已经处理好了 | Gotchas already handled**
+
+- **`.xls` 读写** — pandas 3.x 移除了 xlwt 写入引擎、xlrd 2.x 也不再支持写 `.xls`；
+  项目内改用 xlwt 直写 BIFF8、calamine 读取。
+  pandas 3.x dropped the xlwt writer and xlrd 2.x can no longer write `.xls`;
+  the project writes BIFF8 directly via xlwt and reads via calamine.
+- **SQLite 重复行** — 默认按内容去重后追加，重复运行同一命令不会产生重复记录。
+  Rows are de-duplicated before appending, so re-running a command never duplicates data.
+- **空表格** — 读入空 sheet 给出清晰错误提示，而不是抛出裸 `IndexError`。
+  An empty sheet raises a clear error instead of a bare `IndexError`.
+- **浏览器 profile** — 自动拉起浏览器时复用 `%LOCALAPPDATA%` 下已登录携程的 profile，
+  不会因为全新空 profile 而撞上登录墙。
+  The auto-launched browser reuses your logged-in profile, so you won't hit a login wall.
+- **去重** — 点评按全文哈希去重，不会因前 25 字相同而误删不同的点评。
+  Reviews are de-duplicated by a full-content hash, not a truncated prefix.
+
+---
+
+## 🧪 开发 | Development
 
 ```bash
-# 安装开发依赖（pytest / ruff / mypy）
+# 安装开发依赖 / Install dev dependencies
 uv sync --group dev
 
-# 运行测试
-uv run pytest -q
-
-# 代码检查与格式化
+# 代码检查与格式化 / Lint and format
 uv run ruff check .
 uv run ruff format .
 
-# 类型检查
+# 类型检查 / Type check
 uv run mypy
 ```
 
 ---
 
-## 🛠️ 代码结构说明
+## ⚠️ 使用须知 | Disclaimer
 
-```
-src/ctrip_crawler/
-├── crawler.py         # 采集主引擎：搜索解析、点评抽取、翻页逻辑
-├── selectors.py       # 所有页面 CSS 选择器集中管理（携程改版只改这里）
-├── exporter.py        # 多格式导出：CSV / Excel(.xlsx/.xls) / SQLite / JSON
-├── browser_manager.py # CDP 端口探测与浏览器自动拉起
-├── logging_setup.py   # 日志配置 + 控制台 UTF-8 编码修复
-└── cli.py             # 命令行参数解析
-```
+本工具仅供个人学习与研究使用。请遵守目标网站的 `robots.txt` 与服务条款，
+控制采集频率，勿用于商业用途或大规模数据抓取。
 
-**几个容易踩坑的点，已经处理好了：**
-
-- **`.xls` 读写**：pandas 3.x 移除了 xlwt 写入引擎、xlrd 2.x 也已不支持写 `.xls`，
-  项目内已用 xlwt 直写补齐，并用 calamine 读取 `.xls`。
-- **SQLite 重复行**：默认按内容去重后追加，重复运行同一条命令不会产生重复记录
-  （需要强制覆盖请调用 `DataExporter.export(..., overwrite=True)`）。
-- **空表格**：读入空 sheet 会给出清晰的错误提示，而不是抛出裸 `IndexError`。
-- **浏览器 profile**：自动拉起浏览器时复用 `%LOCALAPPDATA%` 下你日常已登录携程的
-  profile，不会因为用了全新空 profile 而撞上登录墙。
-- **去重**：点评按全文哈希去重，不会因为前 25 个字相同而误删不同的点评。
-
----
-
-## 🗄️ 输出数据字段规范
-
-无论是导出为 CSV、Excel、SQLite 还是 JSON，均包含以下统一的结构化字段：
-
-| 字段名称 | 字段类型 | 示例内容 |
-| :--- | :--- | :--- |
-| **序号** | 整数 | `1` |
-| **景区名称** | 字符串 | `故宫博物院, 北京` |
-| **平台** | 字符串 | `携程` |
-| **内容类型** | 字符串 | `用户点评` |
-| **时间** | 字符串 (YYYY-MM-DD) | `2026-10-20` |
-| **文本内容** | 文本 | `感谢纪导全程精彩的讲解，幽默风趣又娓娓道来...` |
-| **字数** | 整数 | `100` |
-| **评分** | 字符串 | `5分 超棒` |
-| **IP属地** | 字符串 | `北京` |
-| **用户名** | 字符串 | `匿名用户` |
+For personal study and research only. Please respect the target site's `robots.txt`
+and Terms of Service, keep the request rate reasonable, and do not use it for
+commercial purposes or bulk harvesting.

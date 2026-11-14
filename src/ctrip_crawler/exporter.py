@@ -9,6 +9,8 @@ import sqlite3
 
 import pandas as pd
 
+from .paths import resolve_output_path
+
 logger = logging.getLogger(__name__)
 
 # 表格首列序号
@@ -46,7 +48,7 @@ class DataExporter:
         if INDEX_COLUMN not in df.columns:
             df.insert(0, INDEX_COLUMN, range(1, len(df) + 1))
 
-        output_path = os.path.abspath(output_path)
+        output_path = str(resolve_output_path(output_path))
         base_dir = os.path.dirname(output_path)
         if base_dir:
             os.makedirs(base_dir, exist_ok=True)

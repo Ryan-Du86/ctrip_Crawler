@@ -57,7 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         type=str,
         default="携程点评采集结果.xlsx",
-        help="输出文件名或路径 (默认: '携程点评采集结果.xlsx')",
+        help=(
+            "输出文件名或路径，相对路径统一落在 output/ 目录下 "
+            "(默认: '携程点评采集结果.xlsx' -> output/携程点评采集结果.xlsx)"
+        ),
     )
     parser.add_argument(
         "--no-cdp",
