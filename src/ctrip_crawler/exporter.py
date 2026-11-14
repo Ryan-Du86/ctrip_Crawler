@@ -40,7 +40,7 @@ class DataExporter:
         :return: 成功导出的文件绝对路径列表
         """
         if not records:
-            logger.warning("没有可导出的数据。")
+            logger.warning("No data to export.")
             return []
 
         df = pd.DataFrame(records)
@@ -115,7 +115,7 @@ class DataExporter:
                 json.dump(data_dict, f, ensure_ascii=False, indent=2)
             exported_files.append(json_path)
 
-        logger.info("导出完成！共保存 %d 条点评记录，输出文件:", len(df))
+        logger.info("Export complete. Saved %d review(s) to:", len(df))
         for path in exported_files:
             logger.info("    -> %s", path)
 
@@ -203,12 +203,12 @@ class DataExporter:
                 deduped = merged.drop_duplicates()
                 inserted = len(deduped) - len(old_rows)
                 if inserted <= 0:
-                    logger.info("SQLite 中已存在相同记录，无需新增（%s）", path)
+                    logger.info("Identical rows already exist in SQLite; nothing added (%s)", path)
                     return
                 to_insert = deduped.iloc[len(old_rows) :]
 
             to_insert.to_sql(table_name, conn, if_exists="append", index=False)
-            logger.info("SQLite 新增 %d 条记录（%s）", len(to_insert), path)
+            logger.info("Inserted %d new row(s) into SQLite (%s)", len(to_insert), path)
 
 
 def _read_table_columns(conn: sqlite3.Connection, table_name: str) -> list[str]:

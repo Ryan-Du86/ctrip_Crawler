@@ -13,7 +13,7 @@ from .logging_setup import setup_logging
 def build_parser() -> argparse.ArgumentParser:
     """构造参数解析器（单独抽出便于测试）。"""
     parser = argparse.ArgumentParser(
-        description="携程（Ctrip）景点与用户点评智能采集工具",
+        description="Ctrip attraction review crawler",
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
@@ -21,28 +21,28 @@ def build_parser() -> argparse.ArgumentParser:
         "spot_arg",
         nargs="?",
         default=None,
-        help="待采集的景点名称、目的地或直接 URL (例如: '故宫博物院' 或 '武汉东湖' 或 URL)",
+        help="Attraction name, destination, or URL (positional). Example: 'Forbidden City'",
     )
     parser.add_argument(
         "--spot",
         "-s",
         type=str,
         default=None,
-        help="待采集的景点名称、目的地或直接 URL",
+        help="Attraction name, destination, or URL",
     )
     parser.add_argument(
         "--batch",
         "-b",
         type=str,
         default=None,
-        help="批量导入文件路径，支持 Excel (.xlsx, .xls) 或 CSV (.csv)",
+        help="Batch spot list file: Excel (.xlsx, .xls) or CSV (.csv)",
     )
     parser.add_argument(
         "--pages",
         "-p",
         type=int,
         default=3,
-        help="每个景点的最大翻页采集数量（每页 10 条，默认: 3）",
+        help="Maximum pages per attraction (10 reviews per page, default: 3)",
     )
     parser.add_argument(
         "--format",
@@ -50,45 +50,56 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default="auto",
         choices=["auto", "excel", "sqlite", "csv", "json", "all"],
-        help="导出格式选项：auto (由后缀决定) | excel | sqlite | csv | json | all (全部格式导出)",
+        help="Export format: auto (by suffix) | excel | sqlite | csv | json | all",
     )
     parser.add_argument(
         "--output",
         "-o",
         type=str,
-        default="携程点评采集结果.xlsx",
+        default="ctrip_reviews.xlsx",
         help=(
-            "输出文件名或路径，相对路径统一落在 output/ 目录下 "
-            "(默认: '携程点评采集结果.xlsx' -> output/携程点评采集结果.xlsx)"
+            "Output file name or path. Relative paths are resolved under output/ "
+            "(default: 'ctrip_reviews.xlsx' -> output/ctrip_reviews.xlsx)"
         ),
     )
     parser.add_argument(
         "--no-cdp",
         action="store_true",
-        help="禁用 CDP 模式（默认已开启 CDP，防封效果最好）",
+        help="Disable CDP mode (CDP is enabled by default and is the most reliable)",
     )
     parser.add_argument(
         "--cdp-port",
         type=int,
         default=9222,
-        help="CDP 远程调试端口 (默认: 9222)",
+        help="CDP remote debugging port (default: 9222)",
     )
     parser.add_argument(
         "--no-headless",
         action="store_true",
-        help="显示真实浏览器运行窗口（默认无头后台运行）",
+        help="Show the browser window (default: headless)",
     )
     parser.add_argument(
         "--log-file",
         type=str,
         default=None,
-        help="将运行日志同时写入指定文件",
+        help="Also write the run log to this file",
     )
     parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
-        help="输出 DEBUG 级别详细日志",
+        help="Enable DEBUG-level logging",
+    )
+    parser.add_argument(
+        "--require-login",
+        action="store_true",
+        help="Require a signed-in Ctrip session; abort instead of crawling anonymously",
+    )
+    parser.add_argument(
+        "--login-wait",
+        type=int,
+        default=0,
+        help="Seconds to wait for you to sign in (0 = do not wait, crawl anonymously)",
     )
 
     return parser
@@ -111,13 +122,15 @@ def main():
         try:
             spots = CtripSightCrawler.load_spots_from_file(args.batch)
         except Exception as exc:
-            logging.getLogger(__name__).error("批量文件读取失败: %s", exc)
+            logging.getLogger(__name__).error("Failed to read the batch file: %s", exc)
             raise SystemExit(1) from exc
     elif spot_target:
         spots = [spot_target]
     else:
         # 未输入任何参数时给出引导提示
-        logging.getLogger(__name__).info("未提供景点名称或批量文件，默认使用示例: '故宫博物院'")
+        logging.getLogger(__name__).info(
+            "No attraction given; using the default example: '故宫博物院'"
+        )
         spots = ["故宫博物院"]
 
     # 初始化采集器 (CDP 默认开启)
@@ -125,17 +138,23 @@ def main():
         use_cdp=not args.no_cdp,
         cdp_port=args.cdp_port,
         headless=not args.no_headless,
+        require_login=args.require_login,
+        login_wait=args.login_wait,
     )
 
     # 运行采集
-    asyncio.run(
-        crawler.run(
-            spots=spots,
-            max_pages=args.pages,
-            output_file=args.output,
-            format_type=args.format,
+    try:
+        asyncio.run(
+            crawler.run(
+                spots=spots,
+                max_pages=args.pages,
+                output_file=args.output,
+                format_type=args.format,
+            )
         )
-    )
+    except RuntimeError as exc:
+        logging.getLogger(__name__).error("%s", exc)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

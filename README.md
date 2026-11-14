@@ -10,6 +10,7 @@
 - [项目结构 | Project Layout](#-项目结构--project-layout)
 - [快速开始 | Quick Start](#-快速开始--quick-start)
 - [🛡️ CDP 模式 | CDP Mode](#-cdp-模式--cdp-mode)
+- [🔑 登录态 | Login State](#-登录态--login-state)
 - [💻 方式一：编辑器调参 | Editor Mode](#-方式一编辑器调参--editor-mode)
 - [⚡ 方式二：命令行 | CLI Mode](#-方式二命令行--cli-mode)
 - [📋 参数速查表 | CLI Reference](#-参数速查表--cli-reference)
@@ -32,6 +33,7 @@ ctrip_Crawler/
 │   ├── selectors.py           # CSS 选择器集中管理 / Centralized selectors
 │   ├── exporter.py            # 多格式导出 / Multi-format export
 │   ├── browser_manager.py     # CDP 探测与浏览器拉起 / CDP detection & launch
+│   ├── login.py               # 登录态检测 / Login state detection
 │   ├── logging_setup.py       # 日志与编码修复 / Logging & encoding
 │   ├── paths.py               # 路径常量 / Path constants
 │   ├── cli.py                 # 命令行解析 / CLI parsing
@@ -122,6 +124,59 @@ Log in, search, or just leave a tab open on the attraction's review page.
 
 ---
 
+## 🔑 登录态 | Login State
+
+爬虫复用你浏览器里已有的会话，**登录过就能自动识别，不再匿名采集**。
+The crawler reuses the session already in your browser — **sign in once and it is detected automatically**.
+
+### 它是怎么判断的 | How detection works
+
+| 信号 | Signal | 说明 |
+| :--- | :--- | :--- |
+| **页面头部** | DOM header | 页面右上角出现「登录 / 注册」按钮 = 未登录；登录后按钮消失、显示账号昵称 |
+| **会话 Cookie** | Auth cookies | 携程登录后才会下发的 cookie（`_bfa`、`GUID`、`_pd` 等匿名访客也会拿到的已排除） |
+
+> ⚠️ 匿名访问时，携程会把点评用户名显示成「匿名用户」。登录后才能拿到真实昵称。
+> When browsing anonymously, Ctrip masks reviewer names as "匿名用户".
+> Sign in to capture the real nicknames.
+
+### 三种用法 | Three ways to use it
+
+```bash
+# 1) 默认：检测到就登录态采集，没登录就匿名采集
+uv run main.py "故宫"
+
+# 2) 要求登录：没登录直接报错退出，不做匿名采集
+uv run main.py "故宫" --require-login
+
+# 3) 等待登录：给你 180 秒在浏览器窗口里扫码 / 收验证码登录
+uv run main.py "故宫" --login-wait 180
+```
+
+### 编辑器模式 | Editor mode
+
+在 [`main.py`](main.py) 的 **【5. 登录态配置】** 区块：
+
+```python
+# 【5. 登录态配置】Login
+REQUIRE_LOGIN = False  # True = 未登录直接退出
+LOGIN_WAIT = 0  # 未登录时等待你登录的秒数（扫码场景设 180）
+```
+
+### 终端输出 | Terminal output
+
+CDP 连接状态与登录态会以横幅形式打印：
+
+```
+[INFO] [...] CDP CONNECTING   | endpoint: http://127.0.0.1:9222
+[INFO] [ OK ] CDP CONNECTED    | endpoint: http://127.0.0.1:9222 | tab: https://you.ctrip.com/
+[INFO] Session: Logged in (existing session)
+...
+[INFO] [ ... ] CDP DISCONNECTED | tab: browser left open
+```
+
+---
+
 ## 💻 方式一：编辑器调参 | Editor Mode
 
 打开项目根目录下的 [`main.py`](main.py)，在最上方的 **【🛠️ 编辑器参数配置区】** 修改变量即可。
@@ -136,7 +191,7 @@ SPOT_TARGET = "故宫"  # 景点名 / 目的地 / 完整 URL
 MAX_PAGES = 3  # 每个景点翻页数，每页 10 条
 
 # 【3. 数据导出配置】Export
-OUTPUT_FILE = "携程点评采集结果.xlsx"  # -> output/携程点评采集结果.xlsx
+OUTPUT_FILE = "ctrip_reviews.xlsx"  # -> output/ctrip_reviews.xlsx
 EXPORT_FORMAT = "auto"  # auto | excel | csv | sqlite | json | all
 
 # 【4. 浏览器与反爬配置】Browser
@@ -197,6 +252,8 @@ uv run main.py "九寨沟" --pages 2 --format all -o 九寨沟全数据
 | `--no-headless` | - | `False` | 显示浏览器窗口 | Show the browser window |
 | `--log-file` | - | `None` | 同时写入日志文件 | Also write logs to a file |
 | `--verbose` | `-v` | `False` | DEBUG 级日志 | DEBUG-level logging |
+| `--require-login` | - | `False` | 要求已登录携程，否则退出 | Require a signed-in session; abort if not signed in |
+| `--login-wait` | - | `0` | 等待你登录的秒数 | Seconds to wait for you to sign in |
 
 > **编码提示 | Encoding note**
 > 程序启动时会把控制台输出切到 UTF-8，因此在 cmd、PowerShell、git-bash 下打印中文都不会再报 `UnicodeEncodeError`。
@@ -232,6 +289,7 @@ All four formats share the same schema:
 | `selectors.py` | | 全部 CSS 选择器集中管理 | All CSS selectors in one place |
 | `exporter.py` | | CSV / Excel / SQLite / JSON 导出 | Multi-format export |
 | `browser_manager.py` | | CDP 端口探测与浏览器拉起 | CDP detection & browser launch |
+| `login.py` | | 登录态检测与等待登录 | Login state detection & waiting for sign-in |
 | `logging_setup.py` | | 日志配置 + 控制台编码修复 | Logging & console encoding fix |
 | `paths.py` | | 路径常量 | Path constants |
 | `cli.py` | | 命令行参数解析 | CLI parsing |

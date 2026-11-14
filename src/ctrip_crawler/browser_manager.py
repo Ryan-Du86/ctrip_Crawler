@@ -108,7 +108,7 @@ def ensure_cdp_browser(
     # 1. 优先检测是否已有正常工作的 CDP 服务
     for p in ports:
         if is_cdp_active(p):
-            logger.info("检测到 CDP 调试浏览器已就绪: http://127.0.0.1:%d", p)
+            logger.info("CDP browser already running: http://127.0.0.1:%d", p)
             return f"http://127.0.0.1:{p}", None
 
     # 2. 挑选一个未被占用的空闲端口
@@ -119,11 +119,11 @@ def ensure_cdp_browser(
             break
 
     if not bind_port:
-        raise RuntimeError("未找到可用的本地网络端口启动 CDP 服务。")
+        raise RuntimeError("No free local port available for the CDP service.")
 
     browser_path = find_browser_executable()
     if not browser_path:
-        raise RuntimeError("未在系统中找到 Chrome 或 Edge 浏览器安装路径。")
+        raise RuntimeError("Could not find a Chrome or Edge installation on this system.")
 
     if not user_data_dir:
         user_data_dir = default_user_data_dir(browser_path)
@@ -141,7 +141,7 @@ def ensure_cdp_browser(
         args.append("--headless=new")
 
     logger.info(
-        "正在自动拉起本地浏览器 CDP 服务: %s (调试端口: %d, 用户目录: %s)",
+        "Launching a local browser with CDP: %s (port: %d, profile: %s)",
         os.path.basename(browser_path),
         bind_port,
         user_data_dir,
@@ -152,7 +152,7 @@ def ensure_cdp_browser(
     for _ in range(20):
         time.sleep(0.5)
         if is_cdp_active(bind_port):
-            logger.info("本地 CDP 浏览器就绪: http://127.0.0.1:%d", bind_port)
+            logger.info("Local CDP browser ready: http://127.0.0.1:%d", bind_port)
             return f"http://127.0.0.1:{bind_port}", proc
 
     # 启动失败时不要留下孤儿浏览器进程
@@ -161,5 +161,6 @@ def ensure_cdp_browser(
     except Exception:
         pass
     raise RuntimeError(
-        f"CDP 浏览器启动超时（端口 {bind_port} 未就绪），请检查是否有防火墙/杀毒拦截。"
+        f"Timed out waiting for the CDP browser (port {bind_port} never became ready). "
+        "Check for a firewall or antivirus blocker."
     )

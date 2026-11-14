@@ -5,6 +5,7 @@
 2. 智能检索：直接输入目的地/景点名即可自动解析并导航至点评主页
 3. 批量采集：支持从 Excel (.xlsx/.xls) 或 CSV 文件中导入景点名单批量爬取
 4. 多格式输出：无缝支持 CSV, Excel, SQLite, JSON 以及多格式同步导出
+5. 登录态检测：复用浏览器已有会话，可选强制要求登录
 """
 
 import asyncio
@@ -22,6 +23,7 @@ from playwright.async_api import Page, async_playwright
 from . import selectors as S
 from .browser_manager import ensure_cdp_browser
 from .exporter import DataExporter
+from .login import LoginState, ensure_login, summarize
 
 logger = logging.getLogger(__name__)
 
@@ -53,17 +55,24 @@ class CtripSightCrawler:
         use_cdp: bool = True,
         cdp_port: int = 9222,
         headless: bool = True,
+        require_login: bool = False,
+        login_wait: int = 0,
     ):
         """
         :param use_cdp: 是否开启 CDP 模式（默认 True，防反爬能力最强）
         :param cdp_port: CDP 调试端口（默认 9222）
         :param headless: 是否使用无头模式
+        :param require_login: 是否必须登录才能继续（未登录时直接报错退出）
+        :param login_wait: 未登录时等待用户完成登录的秒数（0 表示不等待）
         """
         self.use_cdp = use_cdp
         self.cdp_port = cdp_port
         self.headless = headless
+        self.require_login = require_login
+        self.login_wait = login_wait
         self.records: list[dict] = []
         self.seen_keys: set = set()
+        self.login_state: LoginState | None = None
         self._browser_proc: subprocess.Popen | None = None
 
     @staticmethod
@@ -98,7 +107,7 @@ class CtripSightCrawler:
             raise ValueError(f"不支持的文件格式: {ext}，仅支持 .xlsx, .xls, .csv")
 
         if df is None or len(df.columns) == 0:
-            raise ValueError(f"表格 {file_path} 中没有任何列，无法读取景点名单。")
+            raise ValueError(f"Spreadsheet {file_path} has no columns; cannot read the spot list.")
 
         # 优先匹配常见的列名
         target_col = None
@@ -110,17 +119,17 @@ class CtripSightCrawler:
         # 如果没有匹配到列名，默认使用第一列
         if target_col is None:
             target_col = df.columns[0]
-            logger.info("未在表格中发现标准列名，默认使用首列 [%s] 作为景点名单。", target_col)
+            logger.info("No standard column name found; using the first column [%s].", target_col)
         else:
-            logger.info("成功识别景点所在列: [%s]", target_col)
+            logger.info("Detected the spot column: [%s]", target_col)
 
         spots = [str(x).strip() for x in df[target_col].dropna().tolist() if str(x).strip()]
 
         # 名单去重，避免同一景点被重复爬取
         deduped = list(dict.fromkeys(spots))
         if len(deduped) != len(spots):
-            logger.info("名单去重：%d 条 -> %d 条", len(spots), len(deduped))
-        logger.info("从文件读取到 %d 个待采集景点: %s", len(deduped), deduped[:5])
+            logger.info("Spot list de-duplicated: %d -> %d", len(spots), len(deduped))
+        logger.info("Loaded %d attraction(s) from file: %s", len(deduped), deduped[:5])
         return deduped
 
     # ------------------------------------------------------------------
@@ -137,16 +146,18 @@ class CtripSightCrawler:
         if S.SIGHT_URL_MARKER in current_url:
             page_title = await page.title()
             if not spot_input or spot_input in page_title or spot_input in current_url:
-                logger.info("发现当前浏览器正停留在目标景点页面: 【%s】", page_title)
-                logger.info("无需重复搜索，直接在当前标签页开始采集！")
+                logger.info(
+                    "Current tab is already on the target attraction page: [%s]", page_title
+                )
+                logger.info("Skipping search; crawling the current tab directly.")
                 name = page_title.split(S.TITLE_SUFFIX)[0].strip()
-                return current_url, name or spot_input or "当前景点"
+                return current_url, name or spot_input or "Current attraction"
 
         spot_input = spot_input.strip()
         if spot_input.startswith("http://") or spot_input.startswith("https://"):
-            return spot_input, "指定景点"
+            return spot_input, "Given URL"
 
-        logger.info("正在智能检索目的地/景点: [%s] ...", spot_input)
+        logger.info("Searching for attraction: [%s] ...", spot_input)
         search_url = f"https://you.ctrip.com/globalsearch/?keyword={quote(spot_input)}"
 
         captured_sights: list[dict] = []
@@ -180,7 +191,7 @@ class CtripSightCrawler:
                 if captured_sights:
                     break
         except Exception as exc:
-            logger.warning("访问搜索页异常: %s", exc)
+            logger.warning("Search page request failed: %s", exc)
         finally:
             # 必须移除监听器，否则批量任务中监听器会不断累积
             try:
@@ -191,9 +202,7 @@ class CtripSightCrawler:
         # 优先使用 API 捕获的 sight 卡片，按与查询词的相关度排序
         if captured_sights:
             best = _pick_best_sight(captured_sights, spot_input)
-            logger.info(
-                "智能检索成功！匹配到: 【%s】(%s) -> %s", best["name"], best["score"], best["url"]
-            )
+            logger.info("Search matched: [%s] (%s) -> %s", best["name"], best["score"], best["url"])
             return best["url"], best["name"]
 
         # 兜底：DOM 中直接查找 a[href*="/sight/"]
@@ -206,11 +215,12 @@ class CtripSightCrawler:
                 dom_sights.append({"name": text, "url": href})
         if dom_sights:
             best = _pick_best_sight(dom_sights, spot_input)
-            logger.info("从页面卡片检索到: 【%s】 -> %s", best["name"], best["url"])
+            logger.info("Resolved from page cards: [%s] -> %s", best["name"], best["url"])
             return best["url"], best["name"]
 
         raise RuntimeError(
-            f"未能自动检索到景点 [{spot_input}] 对应的携程点评主页，请检查名称是否准确。"
+            f"Could not find a Ctrip review page for [{spot_input}]. "
+            "Check that the attraction name is correct."
         )
 
     # ------------------------------------------------------------------
@@ -275,8 +285,8 @@ class CtripSightCrawler:
                 }
             )
             logger.info(
-                "    [+] 采集点评: [%s] %s (%s): %s...",
-                publish_time or "未知时间",
+                "    [+] Captured: [%s] %s (%s): %s...",
+                publish_time or "unknown date",
                 user_name,
                 score,
                 content[:35],
@@ -293,7 +303,7 @@ class CtripSightCrawler:
             except Exception as exc:
                 if attempt < NAV_RETRY:
                     logger.warning(
-                        "打开页面失败（第 %d/%d 次）: %s，%.1f 秒后重试",
+                        "Navigation failed (attempt %d/%d): %s; retrying in %.1fs",
                         attempt,
                         NAV_RETRY,
                         exc,
@@ -301,7 +311,7 @@ class CtripSightCrawler:
                     )
                     await asyncio.sleep(NAV_RETRY_DELAY)
                 else:
-                    logger.error("打开页面最终失败: %s", exc)
+                    logger.error("Navigation failed after all retries: %s", exc)
         return False
 
     # ------------------------------------------------------------------
@@ -317,12 +327,12 @@ class CtripSightCrawler:
         try:
             target_url, spot_name = await self._resolve_spot_url(page, spot_input)
         except Exception as exc:
-            logger.warning("解析景点 [%s] 失败: %s", spot_input, exc)
+            logger.warning("Could not resolve attraction [%s]: %s", spot_input, exc)
             return 0
 
-        logger.info("导航至景点点评主页: %s", target_url)
+        logger.info("Navigating to the attraction review page: %s", target_url)
         if not await self._goto_with_retry(page, target_url):
-            logger.warning("[!] 无法打开点评主页，跳过该景点。")
+            logger.warning("Could not open the review page; skipping this attraction.")
             return 0
 
         # 定位评论容器
@@ -332,16 +342,19 @@ class CtripSightCrawler:
             await comment_loc.scroll_into_view_if_needed()
             await asyncio.sleep(1.5)
         except Exception:
-            logger.info("未能定位到点评列表 (%s)，该景点可能暂无用户评论。", S.COMMENT_LIST)
+            logger.info(
+                "Review list (%s) not found; this attraction may have no reviews yet.",
+                S.COMMENT_LIST,
+            )
             return 0
 
         spot_start_count = len(self.records)
 
         for current_page in range(1, max_pages + 1):
-            logger.info("  [>>> %s - 正在采集第 %d/%d 页 <<<]", spot_name, current_page, max_pages)
+            logger.info("  [>>> %s - page %d/%d <<<]", spot_name, current_page, max_pages)
             new_added = await self._extract_page_comments(page, spot_name)
             logger.info(
-                "    [-] 本页新增: %d 条 (该景点累计: %d 条)",
+                "    [-] New on this page: %d (total for this attraction: %d)",
                 new_added,
                 len(self.records) - spot_start_count,
             )
@@ -352,12 +365,12 @@ class CtripSightCrawler:
             # 翻页
             next_btn = page.locator(S.NEXT_PAGE_BUTTON)
             if not await next_btn.count():
-                logger.info("    未找到下一页控件，已到末页。")
+                logger.info("    No next-page control found; already at the last page.")
                 break
 
             btn_class = await next_btn.get_attribute("class") or ""
             if S.DISABLED_CLASS in btn_class:
-                logger.info("    下一页按钮已禁用 (已无更多点评)。")
+                logger.info("    Next-page button is disabled (no more reviews).")
                 break
 
             first_text = ""
@@ -407,7 +420,7 @@ class CtripSightCrawler:
         spot_list = self.normalize_spot_list(spots)
 
         if not spot_list:
-            logger.warning("采集名单为空，任务终止。")
+            logger.warning("The attraction list is empty; nothing to crawl.")
             return
 
         async with async_playwright() as p:
@@ -421,41 +434,53 @@ class CtripSightCrawler:
                         headless=self.headless,
                     )
                     self._browser_proc = proc
+                    self._print_cdp_banner("CONNECTING", endpoint)
                     try:
                         browser = await p.chromium.connect_over_cdp(endpoint)
-                        context = (
-                            browser.contexts[0] if browser.contexts else await browser.new_context()
-                        )
-                        # 优先复用当前已经打开的标签页，绝不重复新开！
-                        if context.pages:
-                            page = context.pages[-1]
-                            logger.info("成功接管当前打开的浏览器标签页: %s", page.url or "空白页")
-                        else:
-                            page = await context.new_page()
                     except Exception as exc:
-                        logger.error("连接 CDP 浏览器失败: %s", exc)
+                        self._print_cdp_banner("FAILED", endpoint, str(exc))
+                        logger.error("Failed to connect to the CDP browser: %s", exc)
                         self._cleanup_browser_process()
                         return
+
+                    context = (
+                        browser.contexts[0] if browser.contexts else await browser.new_context()
+                    )
+                    # 优先复用当前已经打开的标签页，绝不重复新开！
+                    if context.pages:
+                        page = context.pages[-1]
+                    else:
+                        page = await context.new_page()
+                    self._print_cdp_banner("CONNECTED", endpoint, detail=page.url or "blank page")
                 else:
-                    logger.info("运行模式: 原生自动化驱动 (headless=%s)", self.headless)
+                    logger.info("Run mode: native automation driver (headless=%s)", self.headless)
                     for channel in ["msedge", "chrome", None]:
                         try:
                             browser = await p.chromium.launch(
                                 channel=channel, headless=self.headless
                             )
-                            logger.info("成功启动浏览器内核: %s", channel or "Playwright Chromium")
+                            logger.info(
+                                "Browser engine started: %s", channel or "Playwright Chromium"
+                            )
                             break
                         except Exception:
                             continue
                     if not browser:
-                        raise RuntimeError("无法启动浏览器，请安装 Edge/Chrome。")
+                        raise RuntimeError(
+                            "Could not start a browser; please install Edge or Chrome."
+                        )
                     page = await browser.new_page()
+
+                # 登录态检测：复用浏览器已有会话，避免匿名采集受限
+                self.login_state = await self._check_login(page)
 
                 # 遍历采集
                 total_spots = len(spot_list)
                 for idx, spot_item in enumerate(spot_list, start=1):
                     logger.info("#" * 65)
-                    logger.info("[任务进度 %d/%d] 准备处理景点: %s", idx, total_spots, spot_item)
+                    logger.info(
+                        "[Task %d/%d] Processing attraction: %s", idx, total_spots, spot_item
+                    )
                     logger.info("#" * 65)
 
                     await self.crawl_single(page, spot_item, max_pages=max_pages)
@@ -463,7 +488,9 @@ class CtripSightCrawler:
                     # 批量任务间友好随机等待
                     if idx < total_spots:
                         interval = random.uniform(2.5, 4.5)
-                        logger.info("景点间间隔休眠 %.1f 秒，防止触发平台风控...", interval)
+                        logger.info(
+                            "Sleeping %.1fs between attractions to avoid rate limiting...", interval
+                        )
                         await asyncio.sleep(interval)
             finally:
                 if not self.use_cdp:
@@ -472,7 +499,8 @@ class CtripSightCrawler:
                     if browser:
                         await browser.close()
                 else:
-                    logger.info("CDP 模式：已保留当前浏览器与页面窗口，未执行关闭。")
+                    self._print_cdp_banner("DISCONNECTED", detail="browser left open")
+                    self._cleanup_browser_process()
 
         # 导出结果
         DataExporter.export(
@@ -487,11 +515,47 @@ class CtripSightCrawler:
             return
         try:
             self._browser_proc.terminate()
-            logger.info("已结束本次自动拉起的浏览器进程。")
+            logger.info("Terminated the browser process started by this run.")
         except Exception:
             pass
         finally:
             self._browser_proc = None
+
+    @staticmethod
+    def _print_cdp_banner(status: str, endpoint: str = "", detail: str = "") -> None:
+        """
+        在终端打印 CDP 连接状态横幅。
+
+        只输出 ASCII 字符，避免 Windows 旧版控制台编码问题。
+        """
+        marker = {
+            "CONNECTING": "[...]",
+            "CONNECTED": "[ OK ]",
+            "FAILED": "[FAIL]",
+            "DISCONNECTED": "[ ... ]",
+        }.get(status, "[ ... ]")
+
+        parts = [f"CDP {status:<12}"]
+        if endpoint:
+            parts.append(f"endpoint: {endpoint}")
+        if detail:
+            parts.append(f"tab: {detail}")
+        logger.info("%s %s", marker, " | ".join(parts))
+
+    async def _check_login(self, page: Page) -> LoginState:
+        """
+        检查浏览器登录态，必要时等待用户登录。
+
+        复用浏览器里已有的会话，所以只要你在同一个浏览器窗口登录过携程，
+        这里就能直接识别到，不会再以匿名身份采集。
+        """
+        state = await ensure_login(
+            page,
+            require_login=self.require_login,
+            wait_timeout=self.login_wait,
+        )
+        logger.info("Session: %s", summarize(state))
+        return state
 
 
 def _pick_best_sight(candidates: list[dict], query: str) -> dict:
