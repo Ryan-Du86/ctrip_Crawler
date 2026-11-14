@@ -18,12 +18,15 @@ COMMENT_LIST = ".commentList"
 COMMENT_ITEM = ".commentList > .commentItem"
 # 点评正文
 COMMENT_DETAIL = ".commentDetail"
-# 用户名所在的用户信息块
-USER_NAME = ".baseInfo .userName"
+# 用户名（直接位于 .userInfo 内，不是 .baseInfo 的子元素）
+USER_NAME = ".userName"
 # 点评时间与 IP 属地
 COMMENT_TIME = ".commentTime"
-# 评分（位于 .scoreInfo 内）
-SCORE = ".scoreInfo .score"
+# 评分。携程自己的类名拼写就是 "scroreInfo"（不是 scoreInfo），
+# 其中的 .averageScore 承载了「5分 超棒」这样的文本。
+SCORE = ".scroreInfo .averageScore"
+# 兼容旧版 / 新版类名
+SCORE_FALLBACK = ".scroreInfo, .scoreInfo .score, .scoreInfo"
 
 # --- 分页控件 ---
 NEXT_PAGE_BUTTON = ".ant-pagination-next"

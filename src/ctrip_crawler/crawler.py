@@ -241,14 +241,10 @@ class CtripSightCrawler:
                 continue
 
             # 2. 用户名
-            user_loc = item.locator(S.USER_NAME)
-            user_name = (
-                (await user_loc.inner_text()).strip() if await user_loc.count() else "匿名用户"
-            )
+            user_name = await _extract_text(item, (S.USER_NAME,)) or "匿名用户"
 
             # 3. 时间与 IP 属地
-            time_loc = item.locator(S.COMMENT_TIME)
-            time_raw = (await time_loc.inner_text()).strip() if await time_loc.count() else ""
+            time_raw = await _extract_text(item, (S.COMMENT_TIME,))
             publish_time, ip_location = "", ""
             if time_raw:
                 date_match = re.search(r"\d{4}-\d{2}-\d{2}", time_raw)
@@ -258,9 +254,8 @@ class CtripSightCrawler:
                 if ip_match:
                     ip_location = ip_match.group(1)
 
-            # 4. 评分
-            score_loc = item.locator(S.SCORE)
-            score = (await score_loc.inner_text()).strip() if await score_loc.count() else ""
+            # 4. 评分（携程的类名是 "scroreInfo"，同时兼容 scoreInfo）
+            score = await _extract_text(item, (S.SCORE, S.SCORE_FALLBACK))
 
             # 去重：对全文做哈希，避免前 25 字相同的两条点评被误判为重复
             digest = hashlib.md5(content.encode("utf-8")).hexdigest()
@@ -556,6 +551,29 @@ class CtripSightCrawler:
         )
         logger.info("Session: %s", summarize(state))
         return state
+
+
+async def _extract_text(scope, selectors: tuple[str, ...]) -> str:
+    """
+    Return the text of the first matching selector inside ``scope``.
+
+    Each selector is tried in order, so a caller can list the current markup
+    first and legacy spellings afterwards.
+
+    :param scope: a Playwright locator (a comment card)
+    :param selectors: candidate selectors, in priority order
+    :return: the trimmed text, or an empty string when nothing matched
+    """
+    for selector in selectors:
+        try:
+            loc = scope.locator(selector).first
+            if await loc.count():
+                text = (await loc.inner_text()).strip()
+                if text:
+                    return text
+        except Exception:
+            continue
+    return ""
 
 
 def _pick_best_sight(candidates: list[dict], query: str) -> dict:
