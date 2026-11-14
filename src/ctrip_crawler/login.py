@@ -122,6 +122,34 @@ class LoginState:
         return self.is_logged_in
 
 
+async def check_cookies(context: BrowserContext) -> LoginState:
+    """
+    Check the session cookies only, without touching the page.
+
+    This is the fast path: when the browser already holds a Ctrip sign-in
+    cookie there is no reason to render a page, open a dialog, or wait for
+    the user to do anything.
+
+    :param context: the browser context holding the cookies
+    :return: a :class:`LoginState` describing what was found
+    """
+    cookies = await _safe_cookies(context)
+    auth_cookies = [c for c in cookies if _is_auth_cookie(c)]
+    if auth_cookies:
+        names = ", ".join(sorted({c["name"] for c in auth_cookies}))
+        return LoginState(
+            is_logged_in=True,
+            username="",
+            detail=f"session cookies found: {names}",
+        )
+
+    return LoginState(
+        is_logged_in=False,
+        username="",
+        detail="no Ctrip sign-in cookie found",
+    )
+
+
 async def check_login_state(page: Page, settle_ms: int = 2500) -> LoginState:
     """
     Inspect the current browser session for a signed-in Ctrip account.
@@ -130,6 +158,11 @@ async def check_login_state(page: Page, settle_ms: int = 2500) -> LoginState:
     :param settle_ms: how long to let the page header render before reading it
     :return: a :class:`LoginState` describing what was found
     """
+    # 0. Fast path: an existing sign-in cookie means there is nothing to do.
+    cookie_state = await check_cookies(page.context)
+    if cookie_state.is_logged_in:
+        return cookie_state
+
     # Let the header render so the account bar is present.
     if settle_ms > 0:
         try:
@@ -155,21 +188,7 @@ async def check_login_state(page: Page, settle_ms: int = 2500) -> LoginState:
         )
 
     # 3. No nickname either: fall back to the session cookies.
-    cookies = await _safe_cookies(page.context)
-    auth_cookies = [c for c in cookies if _is_auth_cookie(c)]
-    if auth_cookies:
-        names = ", ".join(sorted({c["name"] for c in auth_cookies}))
-        return LoginState(
-            is_logged_in=True,
-            username="",
-            detail=f"session cookies found: {names}",
-        )
-
-    return LoginState(
-        is_logged_in=False,
-        username="",
-        detail="no account nickname and no session cookies found",
-    )
+    return cookie_state
 
 
 async def _safe_cookies(context: BrowserContext) -> list[dict]:
@@ -398,11 +417,24 @@ async def ensure_login(
     """
     Ensure the browser session is signed in before crawling.
 
+    The cookie check comes first: when the browser already holds a Ctrip
+    sign-in cookie the whole login flow is skipped — no page render, no
+    sign-in dialog, no waiting.
+
     :param page: the page used to check the session
     :param require_login: abort the run when no session is found
     :param wait_timeout: seconds to wait for a sign-in to complete (0 = don't wait)
     :return: the resulting login state
     """
+    # Fast path: an existing sign-in cookie short-circuits everything.
+    cookie_state = await check_cookies(page.context)
+    if cookie_state.is_logged_in:
+        logger.info(
+            "Ctrip sign-in cookie found (%s). Skipping the login flow.",
+            cookie_state.detail,
+        )
+        return cookie_state
+
     state = await check_login_state(page)
 
     if state.is_logged_in:
