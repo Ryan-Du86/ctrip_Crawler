@@ -98,8 +98,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--login-wait",
         type=int,
-        default=0,
-        help="Seconds to wait for you to sign in (0 = do not wait, crawl anonymously)",
+        default=60,
+        help="Seconds to wait for you to sign in (default: 60s, 0 = do not wait, crawl anonymously)",
+    )
+    parser.add_argument(
+        "--no-popup-qr",
+        action="store_true",
+        help="Do not automatically pop up the login QR code image in the system viewer",
     )
 
     return parser
@@ -140,6 +145,7 @@ def main():
         headless=not args.no_headless,
         require_login=args.require_login,
         login_wait=args.login_wait,
+        popup_qr=not args.no_popup_qr,
     )
 
     # 运行采集

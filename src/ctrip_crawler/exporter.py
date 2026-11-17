@@ -183,17 +183,22 @@ class DataExporter:
                 df.to_sql(table_name, conn, if_exists="append", index=False)
                 return
 
-            to_insert = df[common_cols]
+            to_insert = df[common_cols].copy()
             old_rows = pd.read_sql_query(f'SELECT * FROM "{table_name}"', conn)[common_cols]
 
             if not old_rows.empty:
+                # 去重判定以非序号的内容列为准
+                content_cols = [c for c in common_cols if c != INDEX_COLUMN] or common_cols
                 merged = pd.concat([old_rows, to_insert], ignore_index=True)
-                deduped = merged.drop_duplicates()
+                deduped = merged.drop_duplicates(subset=content_cols)
                 inserted = len(deduped) - len(old_rows)
                 if inserted <= 0:
                     logger.info("Identical rows already exist in SQLite; nothing added (%s)", path)
                     return
-                to_insert = deduped.iloc[len(old_rows) :]
+                to_insert = deduped.iloc[len(old_rows) :].copy()
+                # 重新对新增行顺序编号，保持序号递增连续
+                if INDEX_COLUMN in to_insert.columns:
+                    to_insert[INDEX_COLUMN] = range(len(old_rows) + 1, len(old_rows) + len(to_insert) + 1)
 
             to_insert.to_sql(table_name, conn, if_exists="append", index=False)
             logger.info("Inserted %d new row(s) into SQLite (%s)", len(to_insert), path)

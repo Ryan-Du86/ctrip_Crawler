@@ -42,6 +42,47 @@ SPOT_COLUMN_CANDIDATES = (
     "keyword",
 )
 
+# 常见特色街区/子景点/著名别名 -> 携程官方主干景区收录页面智能映射库
+ALIAS_SIGHT_MAP: dict[str, str] = {
+    # 陕西·西安
+    "洒金桥": "https://you.ctrip.com/sight/xian7/54080.html",
+    "洒金桥美食街": "https://you.ctrip.com/sight/xian7/54080.html",
+    "西安洒金桥": "https://you.ctrip.com/sight/xian7/54080.html",
+    "大麦市街": "https://you.ctrip.com/sight/xian7/54080.html",
+    "西羊市": "https://you.ctrip.com/sight/xian7/54080.html",
+    "大唐不夜城": "https://you.ctrip.com/sight/xian7/1817457.html",
+    "不夜城": "https://you.ctrip.com/sight/xian7/1817457.html",
+    "永兴坊": "https://you.ctrip.com/sight/xian7/1410188.html",
+    # 四川·成都
+    "宽窄巷子": "https://you.ctrip.com/sight/chengdu104/2330.html",
+    "锦里": "https://you.ctrip.com/sight/chengdu104/2331.html",
+    "锦里古街": "https://you.ctrip.com/sight/chengdu104/2331.html",
+    "春熙路": "https://you.ctrip.com/sight/chengdu104/2334.html",
+    # 重庆
+    "洪崖洞": "https://you.ctrip.com/sight/chongqing158/57606.html",
+    "磁器口": "https://you.ctrip.com/sight/chongqing158/2471.html",
+    "磁器口古镇": "https://you.ctrip.com/sight/chongqing158/2471.html",
+    "李子坝": "https://you.ctrip.com/sight/chongqing158/1825835.html",
+    # 北京
+    "故宫": "https://you.ctrip.com/sight/1/229.html",
+    "故宫博物院": "https://you.ctrip.com/sight/1/229.html",
+    "紫禁城": "https://you.ctrip.com/sight/1/229.html",
+    "什刹海": "https://you.ctrip.com/sight/1/223.html",
+    "后海": "https://you.ctrip.com/sight/1/223.html",
+    "南锣鼓巷": "https://you.ctrip.com/sight/1/56880.html",
+    # 浙江·杭州
+    "西湖": "https://you.ctrip.com/sight/hangzhou14/2555.html",
+    "断桥": "https://you.ctrip.com/sight/hangzhou14/51441.html",
+    "雷峰塔": "https://you.ctrip.com/sight/hangzhou14/2573.html",
+    # 江苏·南京
+    "夫子庙": "https://you.ctrip.com/sight/nanjing9/2361.html",
+    "秦淮河": "https://you.ctrip.com/sight/nanjing9/2361.html",
+    # 湖北·武汉
+    "黄鹤楼": "https://you.ctrip.com/sight/wuhan145/2483.html",
+    "户部巷": "https://you.ctrip.com/sight/wuhan145/54070.html",
+    "东湖": "https://you.ctrip.com/sight/wuhan145/2482.html",
+}
+
 # 导航重试次数与重试间隔
 NAV_RETRY = 3
 NAV_RETRY_DELAY = 3.0
@@ -57,6 +98,7 @@ class CtripSightCrawler:
         headless: bool = True,
         require_login: bool = False,
         login_wait: int = 0,
+        popup_qr: bool = True,
     ):
         """
         :param use_cdp: 是否开启 CDP 模式（默认 True，防反爬能力最强）
@@ -64,12 +106,14 @@ class CtripSightCrawler:
         :param headless: 是否使用无头模式
         :param require_login: 是否必须登录才能继续（未登录时直接报错退出）
         :param login_wait: 未登录时等待用户完成登录的秒数（0 表示不等待）
+        :param popup_qr: 是否自动将登录二维码截图并通过系统默认看图软件弹出（方便无头扫码）
         """
         self.use_cdp = use_cdp
         self.cdp_port = cdp_port
         self.headless = headless
         self.require_login = require_login
         self.login_wait = login_wait
+        self.popup_qr = popup_qr
         self.records: list[dict] = []
         self.seen_keys: set[str] = set()
         self.login_state: LoginState | None = None
@@ -150,10 +194,16 @@ class CtripSightCrawler:
                     "Current tab is already on the target attraction page: [%s]", page_title
                 )
                 logger.info("Skipping search; crawling the current tab directly.")
-                name = page_title.split(S.TITLE_SUFFIX)[0].strip()
+                name = page_title.split(S.TITLE_SUFFIX)[0].split("-")[0].split("_")[0].strip()
                 return current_url, name or spot_input or "Current attraction"
 
         spot_input = spot_input.strip()
+        # 1. 优先查智能知识库别名映射
+        if spot_input in ALIAS_SIGHT_MAP:
+            mapped_url = ALIAS_SIGHT_MAP[spot_input]
+            logger.info("智能知识库匹配: [%s] -> 自动映射至官方主干收录页面: %s", spot_input, mapped_url)
+            return mapped_url, spot_input
+
         if spot_input.startswith("http://") or spot_input.startswith("https://"):
             return spot_input, "Given URL"
 
@@ -226,7 +276,13 @@ class CtripSightCrawler:
     # ------------------------------------------------------------------
     # 点评抽取
     # ------------------------------------------------------------------
-    async def _extract_page_comments(self, page: Page, spot_name: str) -> int:
+    async def _extract_page_comments(
+        self,
+        page: Page,
+        spot_name: str,
+        spot_input: str = "",
+        official_meta: dict[str, str] | None = None,
+    ) -> int:
         """从当前页点评卡片中提取数据（单次 evaluate 批量抽取，减少 CDP 往返）"""
         rows = await self._read_page_rows(page)
         new_count = 0
@@ -259,19 +315,18 @@ class CtripSightCrawler:
             self.seen_keys.add(unique_key)
             new_count += 1
 
-            self.records.append(
-                {
-                    "景区名称": spot_name,
-                    "平台": "携程",
-                    "内容类型": "用户点评",
-                    "时间": publish_time or time_raw,
-                    "文本内容": content,
-                    "字数": len(content),
-                    "评分": score,
-                    "IP属地": ip_location,
-                    "用户名": user_name,
-                }
-            )
+            record: dict[str, str] = {
+                "景区名称": spot_name,
+                "官方规范名称": (official_meta.get("officialName") if official_meta else "") or spot_name,
+                "官方分类与榜单": (official_meta.get("rankTag") if official_meta else "") or "",
+                "景区综合评分": (official_meta.get("score") if official_meta else "") or "",
+                "用户名": user_name,
+                "评分": score,
+                "时间": publish_time or time_raw,
+                "IP属地": ip_location,
+                "文本内容": content,
+            }
+            self.records.append(record)
             logger.info(
                 "    [+] Captured: [%s] %s (%s): %s...",
                 publish_time or "unknown date",
@@ -337,6 +392,22 @@ class CtripSightCrawler:
             logger.warning("Could not open the review page; skipping this attraction.")
             return 0
 
+        # 若是通过直接传入 URL 采集，从页面标题智能解析真实景点名称
+        if not spot_name or spot_name == "Given URL" or spot_name.startswith("http"):
+            try:
+                page_title = await page.title()
+                if S.TITLE_SUFFIX in page_title:
+                    extracted = page_title.split(S.TITLE_SUFFIX)[0].strip()
+                else:
+                    extracted = page_title.split("-")[0].split("_")[0].strip()
+                if extracted:
+                    spot_name = extracted
+                    logger.info("Resolved attraction name from page title: [%s]", spot_name)
+            except Exception:
+                pass
+            if not spot_name or spot_name == "Given URL":
+                spot_name = spot_input
+
         # 定位评论容器
         comment_loc = page.locator(S.COMMENT_LIST)
         try:
@@ -348,13 +419,41 @@ class CtripSightCrawler:
                 "Review list (%s) not found; this attraction may have no reviews yet.",
                 S.COMMENT_LIST,
             )
+            if "洒金桥" in spot_input:
+                logger.warning(
+                    "提示：携程官方将「洒金桥」的游玩与美食点评统归在「西安回民街」主页，建议直接采集对应主页: https://you.ctrip.com/sight/xian7/54080.html"
+                )
             return 0
+
+        # 抽取页面官方分类、榜单荣誉与综合评分等元数据
+        official_meta: dict[str, str] = {}
+        try:
+            official_meta = await page.evaluate("""() => {
+                const getTxt = (sel) => {
+                    const el = document.querySelector(sel);
+                    return el ? (el.innerText || el.textContent || '').trim() : '';
+                };
+                const officialName = getTxt('h1') || getTxt('.titleModule h1') || getTxt('.title');
+                const rankTag = getTxt('.rankText') || getTxt('[class*="rankText"]') || getTxt('[class*="heatScore"]');
+                const score = getTxt('[class*="XReviewScoreV2_scoreBox"]') || getTxt('.averageScore') || getTxt('[class*="score_text"]');
+                return { officialName, rankTag, score };
+            }""")
+        except Exception:
+            official_meta = {}
+
+        if official_meta.get("officialName"):
+            logger.info(
+                "Official metadata: [%s] | Tag: [%s] | Score: [%s]",
+                official_meta["officialName"],
+                official_meta.get("rankTag") or "None",
+                official_meta.get("score") or "None",
+            )
 
         spot_start_count = len(self.records)
 
         for current_page in range(1, max_pages + 1):
             logger.info("  [>>> %s - page %d/%d <<<]", spot_name, current_page, max_pages)
-            new_added = await self._extract_page_comments(page, spot_name)
+            new_added = await self._extract_page_comments(page, spot_name, spot_input, official_meta)
             logger.info(
                 "    [-] New on this page: %d (total for this attraction: %d)",
                 new_added,
@@ -561,6 +660,7 @@ class CtripSightCrawler:
             page,
             require_login=self.require_login,
             wait_timeout=self.login_wait,
+            popup_qr=self.popup_qr,
         )
         logger.info("Session: %s", summarize(state))
         return state
@@ -647,19 +747,21 @@ def _dom_selector_args() -> dict:
 
 def _pick_best_sight(candidates: list[dict], query: str) -> dict:
     """
-    从搜索结果中挑出与查询词最相关的一条。
+    从搜索结果中挑出与查询词最相关且具有真实游客点评的官方景点。
 
-    搜索接口返回顺序并不保证与关键词相关，因此按以下规则打分：
-    1. 名称完全相等（忽略大小写与空格）-> 最高分
-    2. 名称包含查询词 / 查询词包含名称 -> 较高分
+    打分规则：
+    1. 名称完全相等（忽略大小写与空格）-> 最高分 100
+    2. 名称包含查询词 / 查询词包含名称 -> 较高分 60~70
     3. 字符重合度 -> 兜底分
+    4. 真实评论与活跃度加权：真实有评论加 25 分，暂无评论/0评论扣 35 分（避免匹配到0评论的冷门小院）
+    5. 官方综合评分加权：有评分加 10 分
     """
     if not candidates:
         raise RuntimeError("没有可用的候选景点。")
 
     q = _normalize(query)
     best = None
-    best_score = -1.0
+    best_score = -999.0
 
     for cand in candidates:
         name = _normalize(cand.get("name") or "")
@@ -671,6 +773,16 @@ def _pick_best_sight(candidates: list[dict], query: str) -> dict:
         else:
             common = len(set(q) & set(name)) if q and name else 0
             score = common * 5.0
+
+        count_text = cand.get("count") or ""
+        # 真实评论活跃度加权：真实有评论加 25 分，暂无评论扣 35 分
+        if "暂无评论" in count_text or count_text == "0条评论":
+            score -= 35.0
+        elif count_text and re.search(r"\d+", count_text):
+            score += 25.0
+
+        if cand.get("score"):
+            score += 10.0
 
         # 同分时保留靠前的结果
         if score > best_score:
