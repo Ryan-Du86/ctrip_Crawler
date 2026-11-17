@@ -20,6 +20,7 @@ from urllib.parse import quote
 import pandas as pd
 from playwright.async_api import Page, async_playwright
 
+from . import aliases
 from . import selectors as S
 from .browser_manager import ensure_cdp_browser
 from .exporter import DataExporter
@@ -42,46 +43,9 @@ SPOT_COLUMN_CANDIDATES = (
     "keyword",
 )
 
-# 常见特色街区/子景点/著名别名 -> 携程官方主干景区收录页面智能映射库
-ALIAS_SIGHT_MAP: dict[str, str] = {
-    # 陕西·西安
-    "洒金桥": "https://you.ctrip.com/sight/xian7/54080.html",
-    "洒金桥美食街": "https://you.ctrip.com/sight/xian7/54080.html",
-    "西安洒金桥": "https://you.ctrip.com/sight/xian7/54080.html",
-    "大麦市街": "https://you.ctrip.com/sight/xian7/54080.html",
-    "西羊市": "https://you.ctrip.com/sight/xian7/54080.html",
-    "大唐不夜城": "https://you.ctrip.com/sight/xian7/1817457.html",
-    "不夜城": "https://you.ctrip.com/sight/xian7/1817457.html",
-    "永兴坊": "https://you.ctrip.com/sight/xian7/1410188.html",
-    # 四川·成都
-    "宽窄巷子": "https://you.ctrip.com/sight/chengdu104/2330.html",
-    "锦里": "https://you.ctrip.com/sight/chengdu104/2331.html",
-    "锦里古街": "https://you.ctrip.com/sight/chengdu104/2331.html",
-    "春熙路": "https://you.ctrip.com/sight/chengdu104/2334.html",
-    # 重庆
-    "洪崖洞": "https://you.ctrip.com/sight/chongqing158/57606.html",
-    "磁器口": "https://you.ctrip.com/sight/chongqing158/2471.html",
-    "磁器口古镇": "https://you.ctrip.com/sight/chongqing158/2471.html",
-    "李子坝": "https://you.ctrip.com/sight/chongqing158/1825835.html",
-    # 北京
-    "故宫": "https://you.ctrip.com/sight/1/229.html",
-    "故宫博物院": "https://you.ctrip.com/sight/1/229.html",
-    "紫禁城": "https://you.ctrip.com/sight/1/229.html",
-    "什刹海": "https://you.ctrip.com/sight/1/223.html",
-    "后海": "https://you.ctrip.com/sight/1/223.html",
-    "南锣鼓巷": "https://you.ctrip.com/sight/1/56880.html",
-    # 浙江·杭州
-    "西湖": "https://you.ctrip.com/sight/hangzhou14/2555.html",
-    "断桥": "https://you.ctrip.com/sight/hangzhou14/51441.html",
-    "雷峰塔": "https://you.ctrip.com/sight/hangzhou14/2573.html",
-    # 江苏·南京
-    "夫子庙": "https://you.ctrip.com/sight/nanjing9/2361.html",
-    "秦淮河": "https://you.ctrip.com/sight/nanjing9/2361.html",
-    # 湖北·武汉
-    "黄鹤楼": "https://you.ctrip.com/sight/wuhan145/2483.html",
-    "户部巷": "https://you.ctrip.com/sight/wuhan145/54070.html",
-    "东湖": "https://you.ctrip.com/sight/wuhan145/2482.html",
-}
+# 别名映射表放在 data/alias_sight_map.json，由 aliases 模块负责加载。
+# 需要增补映射时只改数据文件即可，无需改动代码。
+# 命中的别名在抓不到点评时会给出对应的提示文案（见 aliases.get_hint）。
 
 # 导航重试次数与重试间隔
 NAV_RETRY = 3
@@ -179,15 +143,43 @@ class CtripSightCrawler:
     # ------------------------------------------------------------------
     # 景点 URL 解析
     # ------------------------------------------------------------------
-    async def _resolve_spot_url(self, page: Page, spot_input: str) -> tuple[str, str]:
+    @staticmethod
+    def _is_sight_url(url: str) -> bool:
+        """
+        判断一个 URL 是否为携程景点详情页。
+
+        同时校验域名与路径特征，避免把携程的其它页面（商城、攻略等）
+        误当成景点点评页而抓不到数据。
+
+        :param url: 待校验的 URL
+        :return: 是携程景点页时返回 True
+        """
+        if not url:
+            return False
+        lowered = url.lower()
+        if S.SIGHT_URL_HOST not in lowered:
+            return False
+        return S.SIGHT_URL_MARKER in lowered
+
+    async def _resolve_spot_url(
+        self,
+        page: Page,
+        spot_input: str,
+        allow_alias: bool = True,
+    ) -> tuple[str, str, str]:
         """
         智能解析输入：
         - 若已是 URL，直接返回；
-        - 若是名称/目的地，通过携程全局搜索 API 自动检索匹配最佳景点点评页面
+        - 若是名称/目的地，先查别名映射表，再通过携程全局搜索 API 检索最佳景点点评页面
+
+        :param page: 用于检索与校验的页面
+        :param spot_input: 用户输入的景点名称或 URL
+        :param allow_alias: 是否允许使用别名映射表
+        :return: (目标 URL, 景点名, 来源标记)；来源标记取值 alias / url / search / current
         """
         # 0. 优先检测：若当前标签页正好就是携程景点/点评页，直接复用当前页面！
         current_url = page.url or ""
-        if S.SIGHT_URL_MARKER in current_url:
+        if self._is_sight_url(current_url):
             page_title = await page.title()
             if not spot_input or spot_input in page_title or spot_input in current_url:
                 logger.info(
@@ -195,17 +187,20 @@ class CtripSightCrawler:
                 )
                 logger.info("Skipping search; crawling the current tab directly.")
                 name = page_title.split(S.TITLE_SUFFIX)[0].split("-")[0].split("_")[0].strip()
-                return current_url, name or spot_input or "Current attraction"
+                return current_url, name or spot_input or "Current attraction", "current"
 
         spot_input = spot_input.strip()
-        # 1. 优先查智能知识库别名映射
-        if spot_input in ALIAS_SIGHT_MAP:
-            mapped_url = ALIAS_SIGHT_MAP[spot_input]
-            logger.info("智能知识库匹配: [%s] -> 自动映射至官方主干收录页面: %s", spot_input, mapped_url)
-            return mapped_url, spot_input
+        # 1. 优先查别名映射表
+        alias_hit = aliases.find_alias(spot_input) if allow_alias else None
+        if alias_hit:
+            alias_key, mapped_url = alias_hit
+            logger.info(
+                "智能知识库匹配: [%s] -> 自动映射至官方主干收录页面: %s", alias_key, mapped_url
+            )
+            return mapped_url, alias_key, "alias"
 
         if spot_input.startswith("http://") or spot_input.startswith("https://"):
-            return spot_input, "Given URL"
+            return spot_input, "Given URL", "url"
 
         logger.info("Searching for attraction: [%s] ...", spot_input)
         search_url = f"https://you.ctrip.com/globalsearch/?keyword={quote(spot_input)}"
@@ -222,7 +217,7 @@ class CtripSightCrawler:
             for home_item in data.get("homeItems", []):
                 for card in home_item.get("items", []):
                     u = card.get("url") or ""
-                    if S.SIGHT_URL_MARKER in u:
+                    if self._is_sight_url(u):
                         captured_sights.append(
                             {
                                 "name": card.get("word") or card.get("name") or spot_input,
@@ -253,7 +248,7 @@ class CtripSightCrawler:
         if captured_sights:
             best = _pick_best_sight(captured_sights, spot_input)
             logger.info("Search matched: [%s] (%s) -> %s", best["name"], best["score"], best["url"])
-            return best["url"], best["name"]
+            return best["url"], best["name"], "search"
 
         # 兜底：DOM 中直接查找 a[href*="/sight/"]
         links = await page.locator(S.SEARCH_SIGHT_LINK).all()
@@ -261,12 +256,12 @@ class CtripSightCrawler:
         for link in links:
             href = await link.get_attribute("href")
             text = (await link.inner_text()).strip().replace("\n", " ")
-            if href and text and not href.startswith("javascript"):
+            if href and text and not href.startswith("javascript") and self._is_sight_url(href):
                 dom_sights.append({"name": text, "url": href})
         if dom_sights:
             best = _pick_best_sight(dom_sights, spot_input)
             logger.info("Resolved from page cards: [%s] -> %s", best["name"], best["url"])
-            return best["url"], best["name"]
+            return best["url"], best["name"], "search"
 
         raise RuntimeError(
             f"Could not find a Ctrip review page for [{spot_input}]. "
@@ -280,7 +275,6 @@ class CtripSightCrawler:
         self,
         page: Page,
         spot_name: str,
-        spot_input: str = "",
         official_meta: dict[str, str] | None = None,
     ) -> int:
         """从当前页点评卡片中提取数据（单次 evaluate 批量抽取，减少 CDP 往返）"""
@@ -379,10 +373,21 @@ class CtripSightCrawler:
         page: Page,
         spot_input: str,
         max_pages: int = 3,
+        _allow_alias: bool = True,
     ) -> int:
-        """采集单个景点的评论数据"""
+        """
+        采集单个景点的评论数据。
+
+        :param page: 使用的页面
+        :param spot_input: 景点名称或 URL
+        :param max_pages: 最大翻页数
+        :param _allow_alias: 是否允许使用别名映射。映射页面失效时会以 False 重试，
+                             避免在同一张失效的映射上反复打转。
+        """
         try:
-            target_url, spot_name = await self._resolve_spot_url(page, spot_input)
+            target_url, spot_name, source = await self._resolve_spot_url(
+                page, spot_input, allow_alias=_allow_alias
+            )
         except Exception as exc:
             logger.warning("Could not resolve attraction [%s]: %s", spot_input, exc)
             return 0
@@ -419,25 +424,22 @@ class CtripSightCrawler:
                 "Review list (%s) not found; this attraction may have no reviews yet.",
                 S.COMMENT_LIST,
             )
-            if "洒金桥" in spot_input:
+            # 映射表里的 URL 可能因携程改版失效，此时回退到搜索流程重新解析，
+            # 而不是直接放弃这个景点。
+            if source == "alias":
                 logger.warning(
-                    "提示：携程官方将「洒金桥」的游玩与美食点评统归在「西安回民街」主页，建议直接采集对应主页: https://you.ctrip.com/sight/xian7/54080.html"
+                    "别名映射出的页面没有点评内容（可能已失效），回退到搜索流程重新解析..."
                 )
+                return await self.crawl_single(page, spot_input, max_pages, _allow_alias=False)
+            hint = aliases.get_hint(spot_name)
+            if hint:
+                logger.warning("提示：%s", hint)
             return 0
 
         # 抽取页面官方分类、榜单荣誉与综合评分等元数据
         official_meta: dict[str, str] = {}
         try:
-            official_meta = await page.evaluate("""() => {
-                const getTxt = (sel) => {
-                    const el = document.querySelector(sel);
-                    return el ? (el.innerText || el.textContent || '').trim() : '';
-                };
-                const officialName = getTxt('h1') || getTxt('.titleModule h1') || getTxt('.title');
-                const rankTag = getTxt('.rankText') || getTxt('[class*="rankText"]') || getTxt('[class*="heatScore"]');
-                const score = getTxt('[class*="XReviewScoreV2_scoreBox"]') || getTxt('.averageScore') || getTxt('[class*="score_text"]');
-                return { officialName, rankTag, score };
-            }""")
+            official_meta = await page.evaluate(_OFFICIAL_META_JS, _official_meta_args())
         except Exception:
             official_meta = {}
 
@@ -453,7 +455,7 @@ class CtripSightCrawler:
 
         for current_page in range(1, max_pages + 1):
             logger.info("  [>>> %s - page %d/%d <<<]", spot_name, current_page, max_pages)
-            new_added = await self._extract_page_comments(page, spot_name, spot_input, official_meta)
+            new_added = await self._extract_page_comments(page, spot_name, official_meta)
             logger.info(
                 "    [-] New on this page: %d (total for this attraction: %d)",
                 new_added,
@@ -524,6 +526,19 @@ class CtripSightCrawler:
             logger.warning("The attraction list is empty; nothing to crawl.")
             return
 
+        try:
+            await self._run_crawl(spot_list, max_pages)
+        finally:
+            # 无论正常结束还是中途报错，已经采到的数据都要落盘，
+            # 否则 CDP 连接失败之类的异常会静默丢掉整轮采集结果。
+            self._export(output_file, format_type)
+
+    async def _run_crawl(self, spot_list: list[str], max_pages: int) -> None:
+        """
+        浏览器交互部分：连接浏览器、检测登录态、逐个景点采集。
+
+        异常直接向上抛出，由 :meth:`run` 统一在 finally 中导出数据。
+        """
         async with async_playwright() as p:
             browser = None
             page: Page | None = None
@@ -546,16 +561,13 @@ class CtripSightCrawler:
                         self._print_cdp_banner("FAILED", endpoint, str(exc))
                         logger.error("Failed to connect to the CDP browser: %s", exc)
                         self._cleanup_browser_process()
-                        return
+                        raise
 
                     context = (
                         browser.contexts[0] if browser.contexts else await browser.new_context()
                     )
-                    # 优先复用当前已经打开的标签页，绝不重复新开！
-                    if context.pages:
-                        page = context.pages[-1]
-                    else:
-                        page = await context.new_page()
+                    # 优先复用已经打开的景点标签页，避免占用用户正在用的其它页面
+                    page = await self._pick_target_page(context)
                     self._print_cdp_banner("CONNECTED", endpoint, detail=page.url or "blank page")
                     connected = True
                 else:
@@ -609,12 +621,46 @@ class CtripSightCrawler:
                         self._print_cdp_banner("DISCONNECTED", detail="browser left open")
                     self._cleanup_browser_process()
 
-        # 导出结果
-        DataExporter.export(
-            records=self.records,
-            output_path=output_file,
-            format_type=format_type,
-        )
+    def _export(self, output_file: str, format_type: str) -> None:
+        """
+        导出采集结果。导出失败只记录日志，不掩盖采集阶段的真实异常。
+        """
+        try:
+            DataExporter.export(
+                records=self.records,
+                output_path=output_file,
+                format_type=format_type,
+            )
+        except Exception as exc:
+            logger.error("Failed to export the collected reviews: %s", exc)
+
+    @staticmethod
+    async def _pick_target_page(context) -> Page:
+        """
+        在已打开的标签页中挑一个适合采集的页面。
+
+        优先级：
+        1. 已经在携程景点页上的标签页 —— 直接复用，不打扰用户；
+        2. 其它已打开的标签页 —— 复用第一个，避免无谓地多开窗口；
+        3. 都没有时新开一个标签页。
+
+        :param context: 浏览器上下文
+        :return: 选中的页面
+        """
+        pages = list(context.pages)
+
+        for candidate in pages:
+            url = (candidate.url or "").lower()
+            if S.SIGHT_URL_HOST in url and S.SIGHT_URL_MARKER in url:
+                logger.info("Reusing the tab already on a Ctrip attraction page.")
+                return candidate
+
+        if pages:
+            logger.info("Reusing the first open tab.")
+            return pages[0]
+
+        logger.info("No open tab found; opening a new one.")
+        return await context.new_page()
 
     def _cleanup_browser_process(self) -> None:
         """异常路径下结束我们自己拉起的浏览器进程，避免留下孤儿进程。"""
@@ -702,10 +748,42 @@ async def _extract_rows_via_locators(page: Page) -> list[dict]:
                 "content": content,
                 "username": await _extract_text(item, (S.USER_NAME,)),
                 "time": await _extract_text(item, (S.COMMENT_TIME,)),
-                "score": await _extract_text(item, (S.SCORE, S.SCORE_FALLBACK)),
+                "score": await _extract_text(item, (S.SCORE, *S.SCORE_FALLBACK)),
             }
         )
     return rows
+
+
+# 景点页官方元数据（规范名 / 榜单标签 / 综合评分）抽取脚本。
+# 候选选择器全部来自 selectors.py，按优先级依次尝试，取第一个非空文本。
+_OFFICIAL_META_JS = """
+(args) => {
+  const getTxt = (selectors) => {
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el) {
+        const t = (el.innerText || el.textContent || '').trim();
+        if (t) return t;
+      }
+    }
+    return '';
+  };
+  return {
+    officialName: getTxt(args.officialName),
+    rankTag: getTxt(args.rankTag),
+    score: getTxt(args.score),
+  };
+}
+"""
+
+
+def _official_meta_args() -> dict:
+    """构造官方元数据抽取脚本的选择器入参（与 selectors.py 保持同源）。"""
+    return {
+        "officialName": list(S.OFFICIAL_NAME),
+        "rankTag": list(S.OFFICIAL_RANK_TAG),
+        "score": list(S.OFFICIAL_SCORE),
+    }
 
 
 # 整页点评字段的一次性批量抽取脚本：每个字段同样按候选选择器顺序兜底。
@@ -740,7 +818,7 @@ def _dom_selector_args() -> dict:
             "content": [S.COMMENT_DETAIL],
             "username": [S.USER_NAME],
             "time": [S.COMMENT_TIME],
-            "score": [S.SCORE, S.SCORE_FALLBACK],
+            "score": [S.SCORE, *S.SCORE_FALLBACK],
         },
     }
 

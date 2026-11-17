@@ -3,6 +3,10 @@
 
 携程前端改版时，只需要修改本文件即可，无需在爬取逻辑中逐处排查。
 每个常量都注明了含义，便于按需调整。
+
+约定：同一字段的多个候选写成「元组」，并且**按优先级从高到低排列**。
+批量抽取脚本与 locator 兜底路径都按这个顺序依次尝试，
+保证两条路径在页面上存在多个候选元素时解析出的是同一个字段。
 """
 
 # --- 景点搜索结果页 ---
@@ -25,8 +29,18 @@ COMMENT_TIME = ".commentTime"
 # 评分。携程自己的类名拼写就是 "scroreInfo"（不是 scoreInfo），
 # 其中的 .averageScore 承载了「5分 超棒」这样的文本。
 SCORE = ".scroreInfo .averageScore"
-# 兼容旧版 / 新版类名
-SCORE_FALLBACK = ".scroreInfo, .scoreInfo .score, .scoreInfo"
+# 兼容旧版 / 新版类名（按优先级排列，逐个尝试）
+SCORE_FALLBACK = (".scroreInfo", ".scoreInfo .score", ".scoreInfo")
+
+# --- 点评页官方元数据（景区规范名 / 榜单标签 / 综合评分） ---
+# 每个字段按优先级从高到低排列，脚本按顺序取第一个非空文本
+OFFICIAL_NAME = ("h1", ".titleModule h1", ".title")
+OFFICIAL_RANK_TAG = (".rankText", '[class*="rankText"]', '[class*="heatScore"]')
+OFFICIAL_SCORE = (
+    '[class*="XReviewScoreV2_scoreBox"]',
+    ".averageScore",
+    '[class*="score_text"]',
+)
 
 # --- 分页控件 ---
 NEXT_PAGE_BUTTON = ".ant-pagination-next"

@@ -1,0 +1,42 @@
+{
+  "_comment": "别名 -> 携程官方主干景区点评主页的映射表。hints 为抓不到点评时给用户的提示文案。",
+  "aliases": {
+    "洒金桥": "https://you.ctrip.com/sight/xian7/54080.html",
+    "洒金桥美食街": "https://you.ctrip.com/sight/xian7/54080.html",
+    "西安洒金桥": "https://you.ctrip.com/sight/xian7/54080.html",
+    "大麦市街": "https://you.ctrip.com/sight/xian7/54080.html",
+    "西羊市": "https://you.ctrip.com/sight/xian7/54080.html",
+    "大唐不夜城": "https://you.ctrip.com/sight/xian7/1817457.html",
+    "不夜城": "https://you.ctrip.com/sight/xian7/1817457.html",
+    "永兴坊": "https://you.ctrip.com/sight/xian7/1410188.html",
+    "宽窄巷子": "https://you.ctrip.com/sight/chengdu104/2330.html",
+    "锦里": "https://you.ctrip.com/sight/chengdu104/2331.html",
+    "锦里古街": "https://you.ctrip.com/sight/chengdu104/2331.html",
+    "春熙路": "https://you.ctrip.com/sight/chengdu104/2334.html",
+    "洪崖洞": "https://you.ctrip.com/sight/chongqing158/57606.html",
+    "磁器口": "https://you.ctrip.com/sight/chongqing158/2471.html",
+    "磁器口古镇": "https://you.ctrip.com/sight/chongqing158/2471.html",
+    "李子坝": "https://you.ctrip.com/sight/chongqing158/1825835.html",
+    "故宫": "https://you.ctrip.com/sight/1/229.html",
+    "故宫博物院": "https://you.ctrip.com/sight/1/229.html",
+    "紫禁城": "https://you.ctrip.com/sight/1/229.html",
+    "什刹海": "https://you.ctrip.com/sight/1/223.html",
+    "后海": "https://you.ctrip.com/sight/1/223.html",
+    "南锣鼓巷": "https://you.ctrip.com/sight/1/56880.html",
+    "西湖": "https://you.ctrip.com/sight/hangzhou14/2555.html",
+    "断桥": "https://you.ctrip.com/sight/hangzhou14/51441.html",
+    "雷峰塔": "https://you.ctrip.com/sight/hangzhou14/2573.html",
+    "夫子庙": "https://you.ctrip.com/sight/nanjing9/2361.html",
+    "秦淮河": "https://you.ctrip.com/sight/nanjing9/2361.html",
+    "黄鹤楼": "https://you.ctrip.com/sight/wuhan145/2483.html",
+    "户部巷": "https://you.ctrip.com/sight/wuhan145/54070.html",
+    "东湖": "https://you.ctrip.com/sight/wuhan145/2482.html"
+  },
+  "hints": {
+    "洒金桥": "携程官方将「洒金桥」的游玩与美食点评统归在「西安回民街」主页，本工具已自动映射到该页面（https://you.ctrip.com/sight/xian7/54080.html）。若该页仍无点评，可直接手动采集上述链接。",
+    "洒金桥美食街": "携程官方将「洒金桥」的游玩与美食点评统归在「西安回民街」主页，本工具已自动映射到该页面（https://you.ctrip.com/sight/xian7/54080.html）。若该页仍无点评，可直接手动采集上述链接。",
+    "西安洒金桥": "携程官方将「洒金桥」的游玩与美食点评统归在「西安回民街」主页，本工具已自动映射到该页面（https://you.ctrip.com/sight/xian7/54080.html）。若该页仍无点评，可直接手动采集上述链接。",
+    "大麦市街": "携程官方将「大麦市街」的点评统归在「西安回民街」主页，本工具已自动映射到该页面（https://you.ctrip.com/sight/xian7/54080.html）。",
+    "西羊市": "携程官方将「西羊市」的点评统归在「西安回民街」主页，本工具已自动映射到该页面（https://you.ctrip.com/sight/xian7/54080.html）。"
+  }
+}

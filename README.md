@@ -31,6 +31,9 @@ ctrip_Crawler/
 ├── src/ctrip_crawler/        # 主包 / Main package
 │   ├── crawler.py             # 采集主引擎 / Core crawler
 │   ├── selectors.py           # CSS 选择器集中管理 / Centralized selectors
+│   ├── aliases.py             # 别名映射表加载 / Alias map loader
+│   ├── data/
+│   │   └── alias_sight_map.json  # 别名 -> 官方主干景点页 / Alias to sight page
 │   ├── exporter.py            # 多格式导出 / Multi-format export
 │   ├── browser_manager.py     # CDP 探测与浏览器拉起 / CDP detection & launch
 │   ├── login.py               # 登录态检测 / Login state detection
@@ -41,6 +44,7 @@ ctrip_Crawler/
 │   └── __init__.py
 ├── examples/
 │   └── 景点名单_示例.xlsx      # 批量名单模板 / Batch spot list template
+├── tests/                     # pytest 单元测试 / pytest unit tests
 └── output/                    # 采集结果（已 gitignore）/ Crawl results (gitignored)
 ```
 
@@ -293,6 +297,7 @@ All four formats share the same schema:
 | :--- | :--- | :--- | :--- |
 | `crawler.py` | | 搜索解析、点评抽取、翻页 | Search resolution, review extraction, pagination |
 | `selectors.py` | | 全部 CSS 选择器集中管理 | All CSS selectors in one place |
+| `aliases.py` | | 别名映射表加载与提示文案 | Alias map loading and hints |
 | `exporter.py` | | CSV / Excel / SQLite / JSON 导出 | Multi-format export |
 | `browser_manager.py` | | CDP 端口探测与浏览器拉起 | CDP detection & browser launch |
 | `login.py` | | 登录态检测与等待登录 | Login state detection & waiting for sign-in |
@@ -302,6 +307,11 @@ All four formats share the same schema:
 
 > 💡 **携程改版时只改 `selectors.py`** —— 页面类名集中在这里，不必满项目排查。
 > When Ctrip redesigns the page, **only `selectors.py` needs editing**.
+
+> 📝 **别名映射表在 `data/alias_sight_map.json`** —— 特色街区、子景点等直接指向官方主干景点的点评页。
+> 需要增补映射时只改这个数据文件，不用动代码；映射出的页面如果没有点评，程序会自动回退到搜索流程。
+> The alias map lives in `data/alias_sight_map.json`; add entries without touching code.
+> If a mapped page turns out to be dead, the crawler falls back to the search flow automatically.
 
 **几个容易踩坑的点，已经处理好了 | Gotchas already handled**
 
@@ -333,6 +343,9 @@ uv run ruff format .
 
 # 类型检查 / Type check
 uv run mypy
+
+# 运行单元测试 / Run unit tests
+uv run pytest
 ```
 
 ---

@@ -100,7 +100,8 @@ class DataExporter:
             # 转为标准 utf-8 字典列表
             data_dict = df.to_dict(orient="records")
             with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(data_dict, f, ensure_ascii=False, indent=2)
+                # default 兜底 numpy 标量等非原生类型，避免 TypeError 中断导出
+                json.dump(data_dict, f, ensure_ascii=False, indent=2, default=_json_default)
             exported_files.append(json_path)
 
         logger.info("Export complete. Saved %d review(s) to:", len(df))
@@ -167,41 +168,52 @@ class DataExporter:
         默认（overwrite=False）时不会重复追加相同内容：若目标表已存在，
         先按内容列做差集过滤，只插入新增记录，避免重复运行产生重复行。
         """
-        with sqlite3.connect(path) as conn:
-            if overwrite:
-                df.to_sql(table_name, conn, if_exists="replace", index=False)
-                return
-
-            existing = _read_table_columns(conn, table_name)
-            if not existing:
-                df.to_sql(table_name, conn, if_exists="append", index=False)
-                return
-
-            # 以目标表已有的列为准，缺失的列补空值，避免列数不一致导致写入失败
-            common_cols = [c for c in df.columns if c in existing]
-            if not common_cols:
-                df.to_sql(table_name, conn, if_exists="append", index=False)
-                return
-
-            to_insert = df[common_cols].copy()
-            old_rows = pd.read_sql_query(f'SELECT * FROM "{table_name}"', conn)[common_cols]
-
-            if not old_rows.empty:
-                # 去重判定以非序号的内容列为准
-                content_cols = [c for c in common_cols if c != INDEX_COLUMN] or common_cols
-                merged = pd.concat([old_rows, to_insert], ignore_index=True)
-                deduped = merged.drop_duplicates(subset=content_cols)
-                inserted = len(deduped) - len(old_rows)
-                if inserted <= 0:
-                    logger.info("Identical rows already exist in SQLite; nothing added (%s)", path)
+        # sqlite3 的连接上下文管理器只负责提交/回滚事务，并不会关闭连接；
+        # 这里额外用 try/finally 显式关闭，否则 .db 文件会一直被占用，
+        # 在 Windows 上会导致后续无法覆盖导出到同一个路径。
+        conn = sqlite3.connect(path)
+        try:
+            with conn:
+                if overwrite:
+                    df.to_sql(table_name, conn, if_exists="replace", index=False)
                     return
-                to_insert = deduped.iloc[len(old_rows) :].copy()
-                # 重新对新增行顺序编号，保持序号递增连续
-                if INDEX_COLUMN in to_insert.columns:
-                    to_insert[INDEX_COLUMN] = range(len(old_rows) + 1, len(old_rows) + len(to_insert) + 1)
 
-            to_insert.to_sql(table_name, conn, if_exists="append", index=False)
-            logger.info("Inserted %d new row(s) into SQLite (%s)", len(to_insert), path)
+                existing = _read_table_columns(conn, table_name)
+                if not existing:
+                    df.to_sql(table_name, conn, if_exists="append", index=False)
+                    return
+
+                # 以目标表已有的列为准，缺失的列补空值，避免列数不一致导致写入失败
+                common_cols = [c for c in df.columns if c in existing]
+                if not common_cols:
+                    df.to_sql(table_name, conn, if_exists="append", index=False)
+                    return
+
+                to_insert = df[common_cols].copy()
+                old_rows = pd.read_sql_query(f'SELECT * FROM "{table_name}"', conn)[common_cols]
+
+                if not old_rows.empty:
+                    # 去重判定以非序号的内容列为准
+                    content_cols = [c for c in common_cols if c != INDEX_COLUMN] or common_cols
+                    merged = pd.concat([old_rows, to_insert], ignore_index=True)
+                    deduped = merged.drop_duplicates(subset=content_cols)
+                    inserted = len(deduped) - len(old_rows)
+                    if inserted <= 0:
+                        logger.info(
+                            "Identical rows already exist in SQLite; nothing added (%s)", path
+                        )
+                        return
+                    to_insert = deduped.iloc[len(old_rows) :].copy()
+                    # 重新对新增行顺序编号，保持序号递增连续
+                    if INDEX_COLUMN in to_insert.columns:
+                        to_insert[INDEX_COLUMN] = range(
+                            len(old_rows) + 1, len(old_rows) + len(to_insert) + 1
+                        )
+
+                to_insert.to_sql(table_name, conn, if_exists="append", index=False)
+                logger.info("Inserted %d new row(s) into SQLite (%s)", len(to_insert), path)
+        finally:
+            conn.close()
 
 
 def _read_table_columns(conn: sqlite3.Connection, table_name: str) -> list[str]:
@@ -217,3 +229,20 @@ def _read_table_columns(conn: sqlite3.Connection, table_name: str) -> list[str]:
         return [row[1] for row in cursor.fetchall()]
     except sqlite3.Error:
         return []
+
+
+def _json_default(obj: object) -> object:
+    """
+    JSON 序列化的兜底转换。
+
+    pandas 的 ``to_dict`` 会把整数列转成 numpy 标量（numpy.int64 等），
+    这类对象默认无法被 ``json.dump`` 序列化。这里优先还原成原生 Python
+    类型，实在无法还原的再退回字符串，保证导出不会中断。
+    """
+    item = getattr(obj, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except Exception:
+            pass
+    return str(obj)
